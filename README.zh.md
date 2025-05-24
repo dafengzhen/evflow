@@ -15,6 +15,16 @@ npm install evflow
 
 ## 快速示例
 
+### 浏览器兼容性
+
+EvFlow 提供了对旧浏览器的兼容版本（legacy build）
+
+如果你的项目需要支持旧版浏览器，请使用以下方式引入：
+
+```javascript
+import {Dispatcher} from 'evflow/legacy';
+```
+
 ### 基本用法
 
 ```javascript

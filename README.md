@@ -16,6 +16,16 @@ npm install evflow
 
 ## Quick Example
 
+### Browser Compatibility
+
+EvFlow provides a legacy build for compatibility with older browsers.
+
+If your project needs to support older versions of browsers, please import it as follows:
+
+```javascript
+import {Dispatcher} from 'evflow/legacy';
+```
+
 ### Basic Usage
 
 ```javascript
