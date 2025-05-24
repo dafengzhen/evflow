@@ -1,4 +1,4 @@
-import type { Callback } from '../types.ts';
+import type { Callback, MiddlewareContext } from '../types.ts';
 
 export class PubSub {
   private subscribers = new Map<string, Set<Callback>>();
@@ -7,7 +7,7 @@ export class PubSub {
     this.subscribers.clear();
   }
 
-  async publish(topic: string, data: any) {
+  async publish(topic: string, data: MiddlewareContext) {
     const subs = this.subscribers.get(topic);
     if (!subs || subs.size === 0) {
       return;

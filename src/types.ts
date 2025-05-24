@@ -2,6 +2,8 @@ import type { StateMachine } from './state/state-machine.ts';
 
 export type Callback = (data: any) => Promise<void> | void;
 
+export type CloneStrategy = (value: unknown, path: string[]) => undefined | unknown;
+
 export interface DiagnosticEntry {
   context?: Record<string, any>;
   level: DiagnosticLevel;
@@ -36,7 +38,7 @@ export interface EventOptions<TPayload = any, TResult = any> {
   result?: TResult;
 }
 
-export type EventStatus = 'completed' | 'failed' | 'idle' | 'running' | 'scheduled' | 'terminated';
+export type EventStatus = 'completed' | 'failed' | 'idle' | 'retrying' | 'running' | 'scheduled' | 'timeout';
 
 export type LifecycleHook = (event: EventEntity, context: MiddlewareContext) => Promise<void> | void;
 
@@ -52,6 +54,7 @@ export type MiddlewareContext = {
   error?: Error;
   event: EventEntity;
   result?: any;
+  status?: EventStatus;
 };
 
 export interface RetryStrategyOptions {

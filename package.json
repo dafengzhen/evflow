@@ -1,7 +1,7 @@
 {
   "name": "evflow",
-  "version": "0.1.0",
-  "description": "evFlow is a simple event management library that supports dependency management, lifecycle hooks, middleware, and event publishing/subscription. It's designed for use cases involving general business flow control.",
+  "version": "0.1.1",
+  "description": "evflow is a simple event management library that supports dependency management, lifecycle hooks, middleware, and event publishing/subscription. It's designed for use cases involving general business flow control.",
   "main": "./dist/evflow.cjs",
   "module": "./dist/evflow.js",
   "types": "./dist/evflow.d.ts",
@@ -59,6 +59,7 @@
     "eslint-plugin-perfectionist": "^4.13.0",
     "globals": "^16.1.0",
     "husky": "^9.1.7",
+    "jsdom": "^26.1.0",
     "prettier": "^3.5.3",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.32.1",

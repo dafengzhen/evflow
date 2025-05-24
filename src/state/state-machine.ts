@@ -4,9 +4,10 @@ const VALID_TRANSITIONS: Record<EventStatus, EventStatus[]> = {
   completed: [],
   failed: [],
   idle: ['scheduled'],
-  running: ['completed', 'failed', 'terminated'],
-  scheduled: ['running', 'terminated'],
-  terminated: [],
+  retrying: ['running', 'failed'],
+  running: ['completed', 'failed', 'timeout'],
+  scheduled: ['running', 'timeout'],
+  timeout: [],
 };
 
 export class StateMachine {
@@ -15,7 +16,7 @@ export class StateMachine {
   }
 
   get isTerminal(): boolean {
-    return ['completed', 'failed', 'terminated'].includes(this._current);
+    return ['completed', 'failed', 'timeout'].includes(this._current);
   }
 
   private _current: EventStatus;
@@ -25,7 +26,11 @@ export class StateMachine {
   }
 
   canTransition(to: EventStatus): boolean {
-    return VALID_TRANSITIONS[this._current].includes(to);
+    const allowed = VALID_TRANSITIONS[this._current];
+    if (!allowed) {
+      throw new Error(`Unknown current state: ${this._current}.`);
+    }
+    return allowed.includes(to);
   }
 
   transition(to: EventStatus): void {

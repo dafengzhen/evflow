@@ -16,7 +16,7 @@ describe('StateMachine', () => {
   });
 
   it('isTerminal returns true when in a terminal state', () => {
-    ['completed', 'failed', 'terminated'].forEach((status) => {
+    ['completed', 'failed', 'timeout'].forEach((status) => {
       machine['_current'] = status as EventStatus;
       expect(machine.isTerminal).toBe(true);
     });
@@ -32,11 +32,11 @@ describe('StateMachine', () => {
       ['idle', 'scheduled', true],
       ['idle', 'running', false],
       ['scheduled', 'running', true],
-      ['scheduled', 'terminated', true],
+      ['scheduled', 'timeout', true],
       ['scheduled', 'idle', false],
       ['running', 'completed', true],
       ['running', 'failed', true],
-      ['running', 'terminated', true],
+      ['running', 'timeout', true],
       ['running', 'scheduled', false],
     ];
 
@@ -55,5 +55,19 @@ describe('StateMachine', () => {
 
   it('throws an error when transitioning to an invalid state', () => {
     expect(() => machine.transition('completed')).toThrowError('Invalid transition: idle → completed.');
+  });
+
+  it('throws an error when attempting an invalid transition', () => {
+    const sm = new StateMachine();
+    const invalidTarget: EventStatus = 'completed';
+
+    expect(() => sm.transition(invalidTarget)).toThrowError(`Invalid transition: idle → ${invalidTarget}.`);
+  });
+
+  it('throws an error if current state is not in VALID_TRANSITIONS', () => {
+    const sm = new StateMachine() as any;
+    sm._current = 'unknown';
+
+    expect(() => sm.canTransition('scheduled')).toThrowError('Unknown current state: unknown');
   });
 });

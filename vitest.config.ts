@@ -15,5 +15,6 @@ export default defineConfig({
         statements: 90,
       },
     },
+    environment: 'jsdom',
   },
 });

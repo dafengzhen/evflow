@@ -1,4 +1,5 @@
 import type {
+  CloneStrategy,
   DiagnosticEntry,
   EventEntity,
   EventHandler,
@@ -31,7 +32,7 @@ export class Dispatcher {
 
   private handlers = new Map<string, EventHandler>();
 
-  private injector = new Injector();
+  private injector;
 
   private lifecycle = new Lifecycle();
 
@@ -40,6 +41,10 @@ export class Dispatcher {
   private pubSub = new PubSub();
 
   private tags = new TagManager();
+
+  constructor(options: { cloneStrategy?: CloneStrategy } = {}) {
+    this.injector = new Injector({ cloneStrategy: options?.cloneStrategy });
+  }
 
   add(event: EventEntity | EventOptions | string, deps: string[] = [], tags: string[] = []): void {
     const _event =
@@ -160,6 +165,14 @@ export class Dispatcher {
     this.middleware.use(middleware);
   }
 
+  private buildContextPayload(ctx: MiddlewareContext, extra?: Record<string, unknown>): MiddlewareContext {
+    return {
+      ...ctx,
+      ...(ctx.result !== undefined ? { result: ctx.result } : {}),
+      ...(extra || {}),
+    };
+  }
+
   private getEnvMode() {
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       return import.meta.env.MODE;
@@ -212,7 +225,8 @@ export class Dispatcher {
       if (!this.injector.has(depId)) {
         throw new Error(`Dependency not resolved: ${depId}.`);
       }
-      return this.injector.resolve(depId);
+
+      return this.injector.resolve(depId, { throwIfNotRegistered: false });
     });
 
     const ctx: MiddlewareContext = { deps: depValues, event };
@@ -220,55 +234,56 @@ export class Dispatcher {
 
     try {
       event.transition('scheduled');
-      await this.lifecycle.trigger(event, 'scheduled', ctx);
-      await this.pubSub.publish(event.context.id, { status: 'scheduled' });
+      await this.lifecycle.trigger(event, 'scheduled', this.buildContextPayload(ctx));
+      await this.pubSub.publish(event.context.id, this.buildContextPayload(ctx, { status: 'scheduled' }));
 
       event.transition('running');
-      await this.lifecycle.trigger(event, 'running', ctx);
-      await this.pubSub.publish(event.context.id, { status: 'running' });
+      await this.lifecycle.trigger(event, 'running', this.buildContextPayload(ctx));
+      await this.pubSub.publish(event.context.id, this.buildContextPayload(ctx, { status: 'running' }));
 
       await this.middleware.execute(ctx, async () => {
         ctx.result = await executeWithStrategy(() => handler(event, ...depValues), {
           backoffFn: disableRetry ? () => 0 : (n) => 100 * Math.pow(2, n),
-          maxRetries: disableRetry ? 0 : 2,
+          maxRetries: disableRetry ? 0 : 3,
           onRetry: async (attempt, error) => {
-            await this.lifecycle.trigger(event, 'retry', {
-              ...ctx,
-              attempt,
-              error,
-            });
-            await this.pubSub.publish(event.context.id, {
-              attempt,
-              error,
-              status: 'retrying',
-            });
+            await this.lifecycle.trigger(
+              event,
+              'retry',
+              this.buildContextPayload(ctx, {
+                attempt,
+                error,
+              }),
+            );
+            await this.pubSub.publish(
+              event.context.id,
+              this.buildContextPayload(ctx, {
+                attempt,
+                error,
+                status: 'retrying',
+              }),
+            );
           },
           onTimeout: async () => {
             await this.lifecycle.trigger(event, 'timeout', ctx);
             await this.pubSub.publish(event.context.id, {
+              ...ctx,
               status: 'timeout',
             });
           },
-          timeoutMs: 3000,
+          timeoutMs: 5000,
         });
       });
 
       this.injector.register(event.context.id, ctx.result);
       event.transition('completed');
-      await this.lifecycle.trigger(event, 'completed', ctx);
-      await this.pubSub.publish(event.context.id, {
-        result: ctx.result,
-        status: 'completed',
-      });
-    } catch (err) {
+      await this.lifecycle.trigger(event, 'completed', this.buildContextPayload(ctx));
+      await this.pubSub.publish(event.context.id, this.buildContextPayload(ctx, { status: 'completed' }));
+    } catch (error) {
       event.transition('failed');
-      await this.lifecycle.trigger(event, 'failed', ctx);
-      await this.pubSub.publish(event.context.id, {
-        error: err,
-        status: 'failed',
-      });
-      this.logError(`Event failed: ${event.context.id}.`, err);
-      throw err;
+      await this.lifecycle.trigger(event, 'failed', this.buildContextPayload(ctx, { error }));
+      await this.pubSub.publish(event.context.id, this.buildContextPayload(ctx, { error, status: 'failed' }));
+      this.logError(`Event failed: ${event.context.id}.`, error);
+      throw error;
     }
   }
 }
