@@ -8,7 +8,7 @@ export default defineConfig({
   build: {
     copyPublicDir: false,
     lib: {
-      entry: resolve(__dirname, 'src'),
+      entry: resolve(__dirname, 'src/evflow.ts'),
       formats: ['es', 'cjs'],
     },
     outDir: 'dist/legacy',

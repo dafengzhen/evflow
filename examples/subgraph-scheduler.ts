@@ -1,4 +1,4 @@
-import { Dispatcher } from '../src';
+import { Dispatcher } from '../src/evflow';
 
 class SubgraphTestRunner {
   private dispatcher = new Dispatcher();
