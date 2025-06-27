@@ -35,6 +35,11 @@ export class Injector {
     this.resolvedCache.delete(token);
   }
 
+  remove(token: string): void {
+    this.instances.delete(token);
+    this.resolvedCache.delete(token);
+  }
+
   resolve<T>(token: string, options?: { throwIfNotRegistered?: boolean }): T {
     const cached = this.resolvedCache.get(token);
     if (cached !== undefined) {

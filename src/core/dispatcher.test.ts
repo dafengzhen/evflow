@@ -47,18 +47,69 @@ describe('Dispatcher', () => {
       expect(mockHandler).toHaveBeenCalledWith(expect.anything(), 'depResult');
     });
 
-    it('should handle terminal state skipping', async () => {
+    it('should automatically reset and re-run terminal state events', async () => {
       const event = new Event({ id: 'event1' });
 
       event.transition('scheduled');
       event.transition('running');
       event.transition('completed');
 
+      expect(event.state.isTerminal).toBe(true);
+
       dispatcher.add(event);
+
+      const mockHandler = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { result: 'success' };
+      });
+
       dispatcher.handle('event1', mockHandler);
 
       await dispatcher.run('event1');
-      expect(mockHandler).not.toHaveBeenCalled();
+      expect(mockHandler).toHaveBeenCalledTimes(1);
+
+      expect(event.state.current).toBe('completed');
+
+      await dispatcher.run('event1');
+      expect(mockHandler).toHaveBeenCalledTimes(2);
+
+      expect(event.state.current).toBe('completed');
+    });
+
+    it('should reset dependencies when re-running parent events', async () => {
+      dispatcher.add('dependency_event');
+      dispatcher.add('parent_event', ['dependency_event']);
+
+      const dependencyMock = vi.fn();
+      const parentMock = vi.fn();
+
+      dispatcher.handle('dependency_event', dependencyMock);
+      dispatcher.handle('parent_event', parentMock);
+
+      await dispatcher.run('parent_event');
+      expect(dependencyMock).toHaveBeenCalledTimes(1);
+      expect(parentMock).toHaveBeenCalledTimes(1);
+
+      await dispatcher.run('parent_event');
+      expect(dependencyMock).toHaveBeenCalledTimes(1);
+      expect(parentMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should clear injector results when resetting events', async () => {
+      const event = new Event({ id: 'event1' });
+
+      dispatcher.add(event);
+      dispatcher.handle('event1', async () => {
+        return { result: Math.random() };
+      });
+
+      await dispatcher.run('event1');
+      const firstResult = dispatcher['injector'].resolve('event1');
+
+      await dispatcher.run('event1');
+      const secondResult = dispatcher['injector'].resolve('event1');
+
+      expect(firstResult).not.toEqual(secondResult);
     });
   });
 

@@ -33,6 +33,10 @@ export class StateMachine {
     return allowed.includes(to);
   }
 
+  reset(): void {
+    this._current = 'idle';
+  }
+
   transition(to: EventStatus): void {
     if (!this.canTransition(to)) {
       throw new Error(`Invalid transition: ${this._current} → ${to}.`);

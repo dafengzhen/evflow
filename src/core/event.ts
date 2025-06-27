@@ -1,6 +1,6 @@
-import type { EventContext, EventOptions, EventStatus } from "../types.ts";
+import type { EventContext, EventOptions, EventStatus } from '../types.ts';
 
-import { StateMachine } from "../state/state-machine.ts";
+import { StateMachine } from '../state/state-machine.ts';
 
 export class Event<TPayload = any, TResult = any> {
   readonly context: EventContext<TPayload, TResult>;
@@ -9,7 +9,7 @@ export class Event<TPayload = any, TResult = any> {
 
   constructor(id: EventOptions | string, payload?: TPayload, result?: TResult) {
     let options: EventOptions;
-    if (typeof id === "string") {
+    if (typeof id === 'string') {
       options = { id, payload, result };
     } else {
       options = id;
@@ -22,6 +22,11 @@ export class Event<TPayload = any, TResult = any> {
       result: options.result,
       status: this.state.current,
     };
+  }
+
+  reset(): void {
+    this.state.reset();
+    this.context.status = this.state.current;
   }
 
   transition(to: EventStatus): void {

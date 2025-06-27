@@ -70,18 +70,18 @@ Order created! { success: true } { stock: 100 }
 
 ### Methods
 
-| Method                           | Description                                        |
-|----------------------------------|----------------------------------------------------|
-| `add(event, deps?, tags?)`       | Registers an event.                                |
-| `handle(eventId, handler)`       | Registers an event handler.                        |
-| `run(eventId)`                   | Dispatches a single event.                         |
-| `runAll(eventIds?, mode?)`       | Dispatches multiple events.                        |
-| `use(middleware)`                | Adds middleware to the event flow.                 |
-| `subscribe(eventId, callback)`   | Subscribes to state changes for a given event.     |
-| `unsubscribe(eventId, callback)` | Unsubscribes from an event's state changes.        |
-| `onLifecycle(phase, hook)`       | Registers a global lifecycle hook.                 |
-| `onEvent(eventId, phase, hook)`  | Registers a lifecycle hook for a specific event.   |
-| `clear()`                        | Clears all registered events, handlers, and state. |
+| Method                               | Description                                        |
+|--------------------------------------|----------------------------------------------------|
+| `add(event, deps?, tags?)`           | Registers an event.                                |
+| `handle(eventId, handler)`           | Registers an event handler.                        |
+| `run(eventId, options?)`             | Dispatches a single event.                         |
+| `runAll(eventIds?, mode?, options?)` | Dispatches multiple events.                        |
+| `use(middleware)`                    | Adds middleware to the event flow.                 |
+| `subscribe(eventId, callback)`       | Subscribes to state changes for a given event.     |
+| `unsubscribe(eventId, callback)`     | Unsubscribes from an event's state changes.        |
+| `onLifecycle(phase, hook)`           | Registers a global lifecycle hook.                 |
+| `onEvent(eventId, phase, hook)`      | Registers a lifecycle hook for a specific event.   |
+| `clear()`                            | Clears all registered events, handlers, and state. |
 
 ## Contributing
 

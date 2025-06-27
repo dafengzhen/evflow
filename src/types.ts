@@ -23,6 +23,7 @@ export interface EventContext<TPayload = any, TResult = any> {
 
 export interface EventEntity<TPayload = any, TResult = any> {
   context: EventContext<TPayload, TResult>;
+  reset(): void;
   state: StateMachine;
   transition(to: EventStatus): void;
 }

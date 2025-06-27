@@ -40,6 +40,8 @@ export class Dispatcher {
 
   private pubSub = new PubSub();
 
+  private runLocks = new Map<string, Promise<void>>();
+
   private tags = new TagManager();
 
   constructor(options: { cloneStrategy?: CloneStrategy } = {}) {
@@ -71,6 +73,7 @@ export class Dispatcher {
     this.diagnostics.clear();
     this.eventIdRegistry.clear();
     this.events.clear();
+    this.runLocks.clear();
     this.graph.clear();
     this.handlers.clear();
     this.injector.clear();
@@ -101,14 +104,76 @@ export class Dispatcher {
     this.lifecycle.registerGlobal(phase, hook);
   }
 
-  async run(eventId: string): Promise<void> {
+  async run(eventId: string, options: { reset?: boolean } = { reset: true }): Promise<void> {
+    return this.runWithOptions(eventId, options.reset ?? true);
+  }
+
+  async runAll(
+    eventIds?: string[],
+    mode: 'downstream' | 'upstream' = 'upstream',
+    options: { ignoreCache?: boolean; reset?: boolean } = { ignoreCache: false, reset: false },
+  ): Promise<void> {
+    let layers: string[][];
+
+    if (eventIds?.length) {
+      eventIds.forEach((id) => {
+        if (!this.events.has(id)) {
+          throw new Error(`Event ${id} not registered.`);
+        }
+      });
+
+      layers = this.graph.layeredSubgraphSort(eventIds, mode);
+    } else {
+      layers = this.graph.layeredTopologicalSort();
+    }
+
+    if (options.ignoreCache) {
+      const allEventIds = layers.flat();
+      allEventIds.forEach((eventId) => {
+        const event = this.events.get(eventId);
+        if (event && event.state.isTerminal) {
+          event.reset();
+          this.injector.remove(eventId);
+        }
+      });
+    }
+
+    for (const layer of layers) {
+      this.logInfo(`Dispatching event layer: [${layer.join(', ')}].`);
+      await Promise.all(
+        layer.map((eventId) =>
+          this.run(eventId, {
+            reset: options.reset || options.ignoreCache,
+          }),
+        ),
+      );
+    }
+  }
+
+  subscribe(eventId: string, callback: (data: any) => void): void {
+    const event = this.getEvent(eventId);
+    this.pubSub.subscribe(event.context.id, callback);
+  }
+
+  unsubscribe(eventId: string, callback: (data: any) => void): void {
+    const event = this.getEvent(eventId);
+    this.pubSub.unsubscribe(event.context.id, callback);
+  }
+
+  use(middleware: Middleware): void {
+    this.middleware.use(middleware);
+  }
+
+  private async _runInternal(eventId: string, reset: boolean): Promise<void> {
     const event = this.getEvent(eventId);
     const handler = this.getHandler(eventId);
 
-    if (event.state.isTerminal) {
-      return this.logInfo(`Event in terminal state, skipping: ${event.context.id}.`, {
-        status: event.state.current,
-      });
+    if (reset && event.state.isTerminal) {
+      event.reset();
+      this.injector.remove(eventId);
+      this.logInfo(`Resetting event '${eventId}' for re-run.`);
+    } else if (!reset && event.state.isTerminal) {
+      return;
     }
 
     const start = performance.now();
@@ -128,41 +193,6 @@ export class Dispatcher {
         phase: event.state.current,
       });
     }
-  }
-
-  async runAll(eventIds?: string[], mode: 'downstream' | 'upstream' = 'upstream'): Promise<void> {
-    let layers: string[][];
-
-    if (eventIds?.length) {
-      eventIds.forEach((id) => {
-        if (!this.events.has(id)) {
-          throw new Error(`Event ${id} not registered.`);
-        }
-      });
-
-      layers = this.graph.layeredSubgraphSort(eventIds, mode);
-    } else {
-      layers = this.graph.layeredTopologicalSort();
-    }
-
-    for (const layer of layers) {
-      this.logInfo(`Dispatching event layer: [${layer.join(', ')}].`);
-      await Promise.all(layer.map((eventId) => this.run(eventId)));
-    }
-  }
-
-  subscribe(eventId: string, callback: (data: any) => void): void {
-    const event = this.getEvent(eventId);
-    this.pubSub.subscribe(event.context.id, callback);
-  }
-
-  unsubscribe(eventId: string, callback: (data: any) => void): void {
-    const event = this.getEvent(eventId);
-    this.pubSub.unsubscribe(event.context.id, callback);
-  }
-
-  use(middleware: Middleware): void {
-    this.middleware.use(middleware);
   }
 
   private buildContextPayload(ctx: MiddlewareContext, extra?: Record<string, unknown>): MiddlewareContext {
@@ -214,11 +244,7 @@ export class Dispatcher {
     this.logInfo(`Processing '${event.context.id}' with dependencies: [${deps.join(', ')}].`);
 
     if (deps.length) {
-      await Promise.all(
-        deps.map(async (depId) => {
-          await this.run(depId!);
-        }),
-      );
+      await Promise.all(deps.map((depId) => this.runCached(depId)));
     }
 
     const depValues = deps.map((depId) => {
@@ -284,6 +310,26 @@ export class Dispatcher {
       await this.pubSub.publish(event.context.id, this.buildContextPayload(ctx, { error, status: 'failed' }));
       this.logError(`Event failed: ${event.context.id}.`, error);
       throw error;
+    }
+  }
+
+  private async runCached(eventId: string): Promise<void> {
+    return this.runWithOptions(eventId, false);
+  }
+
+  private async runWithOptions(eventId: string, reset: boolean): Promise<void> {
+    const inflight = this.runLocks.get(eventId);
+    if (inflight) {
+      return inflight;
+    }
+
+    const exec = this._runInternal(eventId, reset);
+    this.runLocks.set(eventId, exec);
+
+    try {
+      await exec;
+    } finally {
+      this.runLocks.delete(eventId);
     }
   }
 }

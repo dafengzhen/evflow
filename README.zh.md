@@ -69,18 +69,18 @@ await hub.run('order_created');
 
 ### 方法
 
-| 方法                               | 描述                |
-|----------------------------------|-------------------|
-| `add(event, deps?, tags?)`       | 注册事件              |
-| `handle(eventId, handler)`       | 注册事件处理函数          |
-| `run(eventId)`                   | 触发单个事件            |
-| `runAll(eventIds?, mode?)`       | 触发多个事件            |
-| `use(middleware)`                | 向事件流添加中间件         |
-| `subscribe(eventId, callback)`   | 订阅某事件的状态变化        |
-| `unsubscribe(eventId, callback)` | 取消订阅某事件的状态变化      |
-| `onLifecycle(phase, hook)`       | 注册全局生命周期钩子        |
-| `onEvent(eventId, phase, hook)`  | 为特定事件注册生命周期钩子     |
-| `clear()`                        | 清除所有已注册的事件、处理器和状态 |
+| 方法                                   | 描述                |
+|--------------------------------------|-------------------|
+| `add(event, deps?, tags?)`           | 注册事件              |
+| `handle(eventId, handler)`           | 注册事件处理函数          |
+| `run(eventId, options?)`             | 触发单个事件            |
+| `runAll(eventIds?, mode?, options?)` | 触发多个事件            |
+| `use(middleware)`                    | 向事件流添加中间件         |
+| `subscribe(eventId, callback)`       | 订阅某事件的状态变化        |
+| `unsubscribe(eventId, callback)`     | 取消订阅某事件的状态变化      |
+| `onLifecycle(phase, hook)`           | 注册全局生命周期钩子        |
+| `onEvent(eventId, phase, hook)`      | 为特定事件注册生命周期钩子     |
+| `clear()`                            | 清除所有已注册的事件、处理器和状态 |
 
 ## 贡献
 
