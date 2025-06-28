@@ -10,7 +10,7 @@
           "safari": "14"
         },
         "useBuiltIns": "usage",
-        "corejs": "3.42.0",
+        "corejs": "3.43.0",
         "modules": false
       }
     ]
