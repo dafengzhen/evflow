@@ -23,9 +23,11 @@ export interface EventContext<TPayload = any, TResult = any> {
 
 export interface EventEntity<TPayload = any, TResult = any> {
   context: EventContext<TPayload, TResult>;
+  initialPayload: TPayload;
   reset(): void;
   state: StateMachine;
   transition(to: EventStatus): void;
+  updatePayload(payload: TPayload): void;
 }
 
 export type EventHandler<TPayload = any, TResult = any, TDeps extends any[] = any[]> = (
@@ -54,6 +56,7 @@ export type MiddlewareContext = {
   deps: any[];
   error?: Error;
   event: EventEntity;
+  payload?: any;
   result?: any;
   status?: EventStatus;
 };

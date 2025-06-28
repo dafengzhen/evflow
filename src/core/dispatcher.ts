@@ -104,14 +104,24 @@ export class Dispatcher {
     this.lifecycle.registerGlobal(phase, hook);
   }
 
-  async run(eventId: string, options: { reset?: boolean } = { reset: true }): Promise<void> {
-    return this.runWithOptions(eventId, options.reset ?? true);
+  async run(eventId: string, options: { payload?: any; reset?: boolean } = { reset: true }): Promise<void> {
+    const event = this.getEvent(eventId);
+    const shouldReset = options.reset ?? true;
+
+    if (options.payload !== undefined) {
+      event.updatePayload(options.payload);
+    }
+
+    return this.runWithOptions(eventId, shouldReset, true);
   }
 
   async runAll(
     eventIds?: string[],
     mode: 'downstream' | 'upstream' = 'upstream',
-    options: { ignoreCache?: boolean; reset?: boolean } = { ignoreCache: false, reset: false },
+    options: { ignoreCache?: boolean; payloadMap?: Record<string, any>; reset?: boolean } = {
+      ignoreCache: false,
+      reset: false,
+    },
   ): Promise<void> {
     let layers: string[][];
 
@@ -141,11 +151,13 @@ export class Dispatcher {
     for (const layer of layers) {
       this.logInfo(`Dispatching event layer: [${layer.join(', ')}].`);
       await Promise.all(
-        layer.map((eventId) =>
-          this.run(eventId, {
+        layer.map((eventId) => {
+          const payload = options.payloadMap?.[eventId];
+          return this.run(eventId, {
+            payload,
             reset: options.reset || options.ignoreCache,
-          }),
-        ),
+          });
+        }),
       );
     }
   }
@@ -164,12 +176,12 @@ export class Dispatcher {
     this.middleware.use(middleware);
   }
 
-  private async _runInternal(eventId: string, reset: boolean): Promise<void> {
+  private async _runInternal(eventId: string, reset: boolean, preservePayload = false): Promise<void> {
     const event = this.getEvent(eventId);
     const handler = this.getHandler(eventId);
 
     if (reset && event.state.isTerminal) {
-      event.reset();
+      event.reset(preservePayload);
       this.injector.remove(eventId);
       this.logInfo(`Resetting event '${eventId}' for re-run.`);
     } else if (!reset && event.state.isTerminal) {
@@ -255,7 +267,7 @@ export class Dispatcher {
       return this.injector.resolve(depId, { throwIfNotRegistered: false });
     });
 
-    const ctx: MiddlewareContext = { deps: depValues, event };
+    const ctx: MiddlewareContext = { deps: depValues, event, payload: event.context.payload };
     const disableRetry = this.getEnvMode() === 'test';
 
     try {
@@ -314,16 +326,16 @@ export class Dispatcher {
   }
 
   private async runCached(eventId: string): Promise<void> {
-    return this.runWithOptions(eventId, false);
+    return this.runWithOptions(eventId, false, false);
   }
 
-  private async runWithOptions(eventId: string, reset: boolean): Promise<void> {
+  private async runWithOptions(eventId: string, reset: boolean, preservePayload = false): Promise<void> {
     const inflight = this.runLocks.get(eventId);
     if (inflight) {
       return inflight;
     }
 
-    const exec = this._runInternal(eventId, reset);
+    const exec = this._runInternal(eventId, reset, preservePayload);
     this.runLocks.set(eventId, exec);
 
     try {
