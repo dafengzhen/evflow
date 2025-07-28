@@ -3,12 +3,7 @@
     [
       "@babel/preset-env",
       {
-        "targets": {
-          "edge": "88",
-          "firefox": "78",
-          "chrome": "87",
-          "safari": "14"
-        },
+        "targets": "> 0.3%, edge >= 88, firefox >= 78, chrome >= 87, safari >= 14",
         "useBuiltIns": "usage",
         "corejs": "3.43.0",
         "modules": false
