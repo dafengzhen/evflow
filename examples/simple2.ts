@@ -1,4 +1,4 @@
-import { Dispatcher } from '../src/core/dispatcher';
+import { Dispatcher } from '../src/core/dispatcher.ts';
 
 const hub = new Dispatcher();
 

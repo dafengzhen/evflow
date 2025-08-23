@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { withTimeout } from './with-timeout';
+import { withTimeout } from './with-timeout.ts';
 
 describe('withTimeout', () => {
   beforeEach(() => {

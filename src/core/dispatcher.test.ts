@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { EventHandler, LifecycleHook, Middleware } from '../types';
+import type { EventHandler, LifecycleHook, Middleware } from '../types.ts';
 
-import { Dispatcher } from './dispatcher';
-import { Event } from './event';
+import { Dispatcher } from './dispatcher.ts';
+import { Event } from './event.ts';
 
 describe('Dispatcher', () => {
   let dispatcher: Dispatcher;

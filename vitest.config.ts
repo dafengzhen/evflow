@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     coverage: {
       enabled: true,
-      exclude: ['src/evflow.ts', 'src/types.ts', 'src/vite-env.d.ts'],
+      exclude: ['src/index.ts', 'src/types.ts'],
       include: ['src'],
       reporter: ['text', 'html', 'clover', 'json', 'json-summary'],
       reportOnFailure: true,

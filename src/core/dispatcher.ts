@@ -215,18 +215,6 @@ export class Dispatcher {
     };
   }
 
-  private getEnvMode() {
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      return import.meta.env.MODE;
-    }
-
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env.MODE;
-    }
-
-    return 'production';
-  }
-
   private getEvent(eventId: string): Event {
     const event = this.events.get(eventId);
     if (!event) {
@@ -268,7 +256,6 @@ export class Dispatcher {
     });
 
     const ctx: MiddlewareContext = { deps: depValues, event, payload: event.context.payload };
-    const disableRetry = this.getEnvMode() === 'test';
 
     try {
       event.transition('scheduled');
@@ -281,8 +268,8 @@ export class Dispatcher {
 
       await this.middleware.execute(ctx, async () => {
         ctx.result = await executeWithStrategy(() => handler(event, ...depValues), {
-          backoffFn: disableRetry ? () => 0 : (n) => 100 * Math.pow(2, n),
-          maxRetries: disableRetry ? 0 : 3,
+          backoffFn: (n) => 100 * Math.pow(2, n),
+          maxRetries: 3,
           onRetry: async (attempt, error) => {
             await this.lifecycle.trigger(
               event,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { withRetry } from './with-retry';
+import { withRetry } from './with-retry.ts';
 
 describe('withRetry', () => {
   beforeEach(() => {

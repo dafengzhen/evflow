@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { EventStatus } from '../types';
+import type { EventStatus } from '../types.ts';
 
-import { StateMachine } from './state-machine';
+import { StateMachine } from './state-machine.ts';
 
 describe('StateMachine', () => {
   let machine: StateMachine;

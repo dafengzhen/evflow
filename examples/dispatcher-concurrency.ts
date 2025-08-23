@@ -1,4 +1,4 @@
-import { Dispatcher } from '../src/evflow';
+import { Dispatcher } from '../src/index.ts';
 
 class ConcurrencyTest {
   private readonly dispatcher: Dispatcher;

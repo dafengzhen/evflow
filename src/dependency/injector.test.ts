@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Injector } from './injector';
+import { Injector } from './injector.ts';
 
 describe('Injector', () => {
   let injector: Injector;

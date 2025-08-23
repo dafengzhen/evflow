@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import type { MiddlewareContext } from '../types';
+import type { MiddlewareContext } from '../types.ts';
 
 import { Event } from '../core/event.ts';
 import { MiddlewarePipeline } from './middleware.ts';

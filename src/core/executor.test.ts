@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RetryStrategyOptions } from '../types';
+import type { RetryStrategyOptions } from '../types.ts';
 
-import { executeWithStrategy } from './executor';
+import { executeWithStrategy } from './executor.ts';
 
 describe('executeWithStrategy', () => {
   beforeEach(() => {

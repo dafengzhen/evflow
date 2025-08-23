@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { StateMachine } from '../state/state-machine';
-import { Event } from './event';
+import { StateMachine } from '../state/state-machine.ts';
+import { Event } from './event.ts';
 
 describe('Event', () => {
   const mockPayload = { data: 'test' };

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { DiagnosticLevel } from '../types';
+import type { DiagnosticLevel } from '../types.ts';
 
-import { Diagnostics } from './diagnostics';
+import { Diagnostics } from './diagnostics.ts';
 
 describe('Diagnostics', () => {
   let diagnostics: Diagnostics;

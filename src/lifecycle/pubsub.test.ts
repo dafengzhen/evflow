@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MiddlewareContext } from '../types.ts';
 
-import { PubSub } from './pubsub';
+import { PubSub } from './pubsub.ts';
 
 describe('PubSub', () => {
   let pubsub: PubSub;

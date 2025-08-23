@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { EventEntity, MiddlewareContext } from '../types';
+import type { EventEntity, MiddlewareContext } from '../types.ts';
 
 import { Lifecycle } from './lifecycle.ts';
 
