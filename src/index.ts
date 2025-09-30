@@ -4,6 +4,11 @@ import { EventCancelledError } from './event-cancelled-error.js';
 import { EventTimeoutError } from './event-timeout-error.js';
 import { EventState } from './types.js';
 
+/**
+ * EventBus.
+ *
+ * @author dafengzhen
+ */
 export class EventBus<EM extends EventMap> {
   private handlers = new Map<keyof EM, Array<EventHandler<any, any>>>();
 
@@ -96,6 +101,11 @@ export class EventBus<EM extends EventMap> {
   }
 }
 
+/**
+ * EventTask.
+ *
+ * @author dafengzhen
+ */
 export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
   public readonly id: string;
   public readonly name?: string;

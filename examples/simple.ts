@@ -14,7 +14,5 @@ bus.on('user.created', (ctx) => {
   return { ok: true };
 });
 
-(async () => {
-  const results = await bus.emit('user.created', { meta: { userId: '42' } });
-  console.log(results);
-})();
+const results = await bus.emit('user.created', { meta: { userId: '42' } });
+console.log(results);

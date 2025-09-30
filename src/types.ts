@@ -14,19 +14,19 @@ export interface EmitOptions {
 }
 
 export interface EventContext<T extends PlainObject = PlainObject> {
-  id?: string; // 事件ID
-  meta?: T; // 任意元数据
-  name?: string; // 事件名称
-  parentId?: string; // 上级事件 ID（支持嵌套链路追踪）
-  timestamp?: number; // 触发时间
-  traceId?: string; // 链路追踪 ID
+  id?: string;
+  meta?: T;
+  name?: string;
+  parentId?: string;
+  timestamp?: number;
+  traceId?: string;
 }
 
 export type EventHandler<Ctx extends PlainObject = PlainObject, R = any> = (
   context: EventContext<Ctx>,
 ) => Promise<R> | R;
 
-export interface EventMap<Ctx extends PlainObject = PlainObject> {
+export interface EventMap {
   [eventName: string]: PlainObject;
 }
 
