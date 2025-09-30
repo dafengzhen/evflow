@@ -27,7 +27,7 @@ npm install evflow
 ## 🚀 使用示例
 
 ```ts
-import { EventBus, EventState } from "evflow";
+import { EventBus, EventTask } from "evflow";
 
 type MyEvents = {
   userLogin: { username: string };
