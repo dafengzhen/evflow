@@ -1,29 +1,20 @@
-import { Dispatcher } from '../src/core/dispatcher.ts';
+import type { EventMap } from '../src/types.js';
 
-const hub = new Dispatcher();
+import { EventBus } from '../src/index.js';
 
-// Register dependencies
-hub.add('payment_processed');
-hub.add('inventory_check');
+interface MyEvents extends EventMap {
+  'user.created': { userId: string };
+  'user.deleted': { userId: string };
+}
 
-// Register main event (dependencies already exist)
-hub.add('order_created', ['payment_processed', 'inventory_check']);
+const bus = new EventBus<MyEvents>();
 
-// Register handlers for all dependencies
-hub.handle('payment_processed', async () => {
-  console.log('Processing payment...');
-  return { success: true };
+bus.on('user.created', (ctx) => {
+  console.log('traceId', ctx.traceId, 'created user', ctx.meta?.userId);
+  return { ok: true };
 });
 
-hub.handle('inventory_check', async () => {
-  console.log('Checking inventory...');
-  return { stock: 100 };
-});
-
-hub.handle('order_created', async (_, paymentResult, inventoryResult) => {
-  console.log('Order created!', paymentResult, inventoryResult);
-});
-
-// Dispatch event
-await hub.run('order_created');
-await hub.run('order_created');
+(async () => {
+  const results = await bus.emit('user.created', { meta: { userId: '42' } });
+  console.log(results);
+})();

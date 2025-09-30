@@ -1,70 +1,44 @@
-import type { StateMachine } from './state/state-machine.ts';
-
-export type Callback = (data: any) => Promise<void> | void;
-
-export type CloneStrategy = (value: unknown, path: string[]) => undefined | unknown;
-
-export interface DiagnosticEntry {
-  context?: Record<string, any>;
-  level: DiagnosticLevel;
-  message: string;
-  timestamp: number;
+export enum EventState {
+  Cancelled = 'cancelled',
+  Failed = 'failed',
+  Idle = 'idle',
+  Running = 'running',
+  Succeeded = 'succeeded',
+  Timeout = 'timeout',
 }
 
-export type DiagnosticLevel = 'error' | 'info' | 'warn';
-
-export interface EventContext<TPayload = any, TResult = any> {
-  id: string;
-  payload?: TPayload;
-  result?: TResult;
-  status: EventStatus;
-  tags?: string[];
+export interface EmitOptions {
+  globalTimeout?: number;
+  parallel?: boolean;
+  stopOnError?: boolean;
 }
 
-export interface EventEntity<TPayload = any, TResult = any> {
-  context: EventContext<TPayload, TResult>;
-  initialPayload: TPayload;
-  reset(): void;
-  state: StateMachine;
-  transition(to: EventStatus): void;
-  updatePayload(payload: TPayload): void;
+export interface EventContext<T extends PlainObject = PlainObject> {
+  id?: string; // 事件ID
+  meta?: T; // 任意元数据
+  name?: string; // 事件名称
+  parentId?: string; // 上级事件 ID（支持嵌套链路追踪）
+  timestamp?: number; // 触发时间
+  traceId?: string; // 链路追踪 ID
 }
 
-export type EventHandler<TPayload = any, TResult = any, TDeps extends any[] = any[]> = (
-  event: EventEntity<TPayload, TResult>,
-  ...dependencies: TDeps
-) => Promise<TResult> | TResult;
+export type EventHandler<Ctx extends PlainObject = PlainObject, R = any> = (
+  context: EventContext<Ctx>,
+) => Promise<R> | R;
 
-export interface EventOptions<TPayload = any, TResult = any> {
-  id: string;
-  payload?: TPayload;
-  result?: TResult;
+export interface EventMap<Ctx extends PlainObject = PlainObject> {
+  [eventName: string]: PlainObject;
 }
 
-export type EventStatus = 'completed' | 'failed' | 'idle' | 'retrying' | 'running' | 'scheduled' | 'timeout';
-
-export type LifecycleHook = (event: EventEntity, context: MiddlewareContext) => Promise<void> | void;
-
-export type LifecyclePhase = 'completed' | 'failed' | 'retry' | 'running' | 'scheduled' | 'timeout';
-
-export type LogLevel = 'error' | 'info' | 'warn';
-
-export type Middleware = (ctx: MiddlewareContext, next: () => Promise<void>) => Promise<void>;
-
-export type MiddlewareContext = {
-  attempt?: number;
-  deps: any[];
-  error?: Error;
-  event: EventEntity;
-  payload?: any;
-  result?: any;
-  status?: EventStatus;
-};
-
-export interface RetryStrategyOptions {
-  backoffFn?: (attempt: number) => number;
-  maxRetries?: number;
-  onRetry?: (attempt: number, error: Error) => Promise<void>;
-  onTimeout?: () => Promise<void>;
-  timeoutMs?: number;
+export interface EventTaskOptions {
+  id?: string;
+  isRetryable?: (err: any) => boolean;
+  name?: string;
+  onStateChange?: (state: EventState, info?: any) => void;
+  retries?: number;
+  retryBackoff?: number;
+  retryDelay?: number;
+  timeout?: number;
 }
+
+export type PlainObject = Record<string, any>;

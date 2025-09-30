@@ -1,86 +1,66 @@
-# EvFlow
+## 📌 简介
 
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-**EvFlow** 是一个简单的事件管理库，支持依赖管理、生命周期钩子、中间件以及事件发布/订阅。它适用于一般的业务流程控制场景。
+EventBus 是一个轻量级、TypeScript 优先的事件系统，支持 异步任务处理、重试机制、超时控制 和 任务取消
+
+非常适合在事件驱动架构中使用，尤其是事件可能失败、超时或需要重试的场景
 
 [English](./README.md)
 
-## 安装
+## ✨ 特性
+
+- TypeScript 强类型事件定义
+- 支持并行或串行执行
+- 全局超时控制
+- 重试 + 回退策略
+- 任务可取消
+- 状态变更钩子
+
+## 📦 安装
 
 ```bash
 npm install evflow
 ```
 
-## 快速示例
+## 🚀 使用示例
 
-### 浏览器兼容性
+```ts
+import { EventBus, EventState } from "evflow";
 
-EvFlow 提供了对旧浏览器的兼容版本（legacy build）
+type MyEvents = {
+  userLogin: { username: string };
+  dataFetch: { url: string };
+};
 
-如果你的项目需要支持旧版浏览器，请使用以下方式引入：
+const bus = new EventBus<MyEvents>();
 
-```javascript
-import {Dispatcher} from 'evflow/legacy';
-```
-
-### 基本用法
-
-```javascript
-import {Dispatcher} from 'evflow';
-
-const hub = new Dispatcher();
-
-// 注册依赖事件
-hub.add('payment_processed');
-hub.add('inventory_check');
-
-// 注册主事件（依赖事件已存在）
-hub.add('order_created', ['payment_processed', 'inventory_check']);
-
-// 为所有依赖事件注册处理器
-hub.handle('payment_processed', async () => {
-  console.log('正在处理付款...');
-  return {success: true};
-});
-
-hub.handle('inventory_check', async () => {
-  console.log('正在检查库存...');
-  return {stock: 100};
-});
-
-hub.handle('order_created', async (_, paymentResult, inventoryResult) => {
-  console.log('订单已创建！', paymentResult, inventoryResult);
+// 订阅事件
+bus.on("userLogin", async (ctx) => {
+  console.log("用户登录:", ctx.username);
 });
 
 // 触发事件
-await hub.run('order_created');
-
-// 控制台输出：
-/*
-正在处理付款...
-正在检查库存...
-订单已创建！ { success: true } { stock: 100 }
-*/
+bus.emit("userLogin", { username: "alice" });
 ```
 
-## 核心 API
+```ts
+bus.on("dataFetch", async (ctx) => {
+  // 模拟请求
+  await new Promise((r) => setTimeout(r, 200));
+  return `来自 ${ctx.url} 的数据`;
+});
 
-### 方法
+const results = await bus.emit(
+  "dataFetch",
+  { url: "https://api.example.com" },
+  { retries: 3, retryDelay: 100, timeout: 1000 },
+  { parallel: true, stopOnError: false, globalTimeout: 2000 }
+);
 
-| 方法                                   | 描述                |
-|--------------------------------------|-------------------|
-| `add(event, deps?, tags?)`           | 注册事件              |
-| `handle(eventId, handler)`           | 注册事件处理函数          |
-| `run(eventId, options?)`             | 触发单个事件            |
-| `runAll(eventIds?, mode?, options?)` | 触发多个事件            |
-| `use(middleware)`                    | 向事件流添加中间件         |
-| `subscribe(eventId, callback)`       | 订阅某事件的状态变化        |
-| `unsubscribe(eventId, callback)`     | 取消订阅某事件的状态变化      |
-| `onLifecycle(phase, hook)`           | 注册全局生命周期钩子        |
-| `onEvent(eventId, phase, hook)`      | 为特定事件注册生命周期钩子     |
-| `clear()`                            | 清除所有已注册的事件、处理器和状态 |
+console.log(results);
+```
 
 ## 贡献
 

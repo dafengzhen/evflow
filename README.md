@@ -1,87 +1,66 @@
-# EvFlow
+## 📌 Introduction
 
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-**EvFlow** is a simple event management library that supports dependency management, lifecycle hooks, middleware, and
-event publishing/subscription. It's designed for use cases involving general business flow control.
+`EventBus` is a lightweight, TypeScript-first event system with **async task handling**, **retries**, **timeouts**, and **cancellation support**.
+
+It is designed for building reliable event-driven applications where event handlers may fail, timeout, or need retries.
 
 [简体中文](./README.zh.md)
 
-## Installation
+## ✨ Features
+
+- TypeScript generic event typing
+- Parallel or serial event emission
+- Global timeout control
+- Retry with backoff strategy
+- Task cancellation
+- Hook for task state change
+
+## 📦 Installation
 
 ```bash
 npm install evflow
 ```
 
-## Quick Example
+## 🚀 Usage
 
-### Browser Compatibility
+```ts
+import { EventBus, EventState } from "your-eventbus";
 
-EvFlow provides a legacy build for compatibility with older browsers.
+type MyEvents = {
+  userLogin: { username: string };
+  dataFetch: { url: string };
+};
 
-If your project needs to support older versions of browsers, please import it as follows:
+const bus = new EventBus<MyEvents>();
 
-```javascript
-import {Dispatcher} from 'evflow/legacy';
+// Subscribe
+bus.on("userLogin", async (ctx) => {
+  console.log("User logged in:", ctx.username);
+});
+
+// Emit
+bus.emit("userLogin", { username: "alice" });
 ```
 
-### Basic Usage
-
-```javascript
-import {Dispatcher} from 'evflow';
-
-const hub = new Dispatcher();
-
-// Register dependencies
-hub.add('payment_processed');
-hub.add('inventory_check');
-
-// Register main event (dependencies already exist)
-hub.add('order_created', ['payment_processed', 'inventory_check']);
-
-// Register handlers for all dependencies
-hub.handle('payment_processed', async () => {
-  console.log('Processing payment...');
-  return {success: true};
+```ts
+bus.on("dataFetch", async (ctx) => {
+  // Simulate request
+  await new Promise((r) => setTimeout(r, 200));
+  return `Fetched from ${ctx.url}`;
 });
 
-hub.handle('inventory_check', async () => {
-  console.log('Checking inventory...');
-  return {stock: 100};
-});
+const results = await bus.emit(
+  "dataFetch",
+  { url: "https://api.example.com" },
+  { retries: 3, retryDelay: 100, timeout: 1000 },
+  { parallel: true, stopOnError: false, globalTimeout: 2000 }
+);
 
-hub.handle('order_created', async (_, paymentResult, inventoryResult) => {
-  console.log('Order created!', paymentResult, inventoryResult);
-});
-
-// Dispatch event
-await hub.run('order_created');
-
-// Console logs
-/*
-Processing payment...
-Checking inventory...
-Order created! { success: true } { stock: 100 }
-*/
+console.log(results);
 ```
-
-## Core API
-
-### Methods
-
-| Method                               | Description                                        |
-|--------------------------------------|----------------------------------------------------|
-| `add(event, deps?, tags?)`           | Registers an event.                                |
-| `handle(eventId, handler)`           | Registers an event handler.                        |
-| `run(eventId, options?)`             | Dispatches a single event.                         |
-| `runAll(eventIds?, mode?, options?)` | Dispatches multiple events.                        |
-| `use(middleware)`                    | Adds middleware to the event flow.                 |
-| `subscribe(eventId, callback)`       | Subscribes to state changes for a given event.     |
-| `unsubscribe(eventId, callback)`     | Unsubscribes from an event's state changes.        |
-| `onLifecycle(phase, hook)`           | Registers a global lifecycle hook.                 |
-| `onEvent(eventId, phase, hook)`      | Registers a lifecycle hook for a specific event.   |
-| `clear()`                            | Clears all registered events, handlers, and state. |
 
 ## Contributing
 
