@@ -113,11 +113,16 @@ describe('EventBus - Persistence', () => {
 
     const results = await bus.emit('foo', { meta: { msg: 'fail case' } });
     expect(results[0].error).toBeInstanceOf(Error);
+    expect(results[0].error?.message).toBe('fail persist');
 
     const records = await store.loadByName('foo');
-    expect(records.length).toBe(1);
-    expect(records[0].error.message).toBe('fail persist');
-    expect(records[0].state).toBe(EventState.Failed);
+    const failedRecord = records.find((record) => record.state === 'failed');
+    expect(failedRecord).toBeDefined();
+    expect(failedRecord?.error?.message).toBe('fail persist');
+    expect(failedRecord?.state).toBe('failed');
+
+    const dlqRecord = records.find((record) => record.state === 'deadletter');
+    expect(dlqRecord).toBeDefined();
   });
 });
 
@@ -368,6 +373,419 @@ describe('EventBus - Event Version Migration', () => {
       category: 'default',
       name: 'Item1',
       quantity: 1,
+    });
+  });
+});
+
+/**
+ * EventBus - Dead Letter Queue (DLQ).
+ *
+ * @author dafengzhen
+ */
+describe('EventBus = Dead Letter Queue (DLQ)', () => {
+  it('should enter DLQ after event failure and can be requeue / purge with stats', async () => {
+    const store = new InMemoryEventStore();
+    const bus = new EventBus<any>(store);
+
+    bus.on('order.created', async () => {
+      throw new Error('Processing failed');
+    });
+    const traceId = 'trace_dlq_test';
+
+    // Initial state - no DLQ records
+    const initialStats = await bus.getDLQStats(traceId);
+    expect(initialStats.total).toBe(0);
+    expect(initialStats.byEvent).toEqual({});
+    expect(initialStats.oldest).toBeNull();
+    expect(initialStats.newest).toBeNull();
+
+    // Trigger event failure
+    await bus.emit('order.created', { meta: { orderId: 999 }, traceId }, { retries: 2 });
+
+    // Verify entry into DLQ
+    const dlqItems = await bus.listDLQ(traceId);
+    expect(dlqItems.length).toBe(1);
+
+    // Verify statistics
+    const afterFailureStats = await bus.getDLQStats(traceId);
+    expect(afterFailureStats.total).toBe(1);
+    expect(afterFailureStats.byEvent).toEqual({
+      'order.created': 1,
+    });
+    expect(afterFailureStats.oldest).toBeInstanceOf(Date);
+    expect(afterFailureStats.newest).toBeInstanceOf(Date);
+    expect(afterFailureStats.oldest).toEqual(afterFailureStats.newest); // Only one record, same timestamp
+
+    // Requeue DLQ record
+    await bus.requeueDLQ(traceId, dlqItems[0].id);
+
+    // Verify DLQ record still exists after requeue
+    const afterRequeue = await bus.listDLQ(traceId);
+    expect(afterRequeue.length).toBe(1);
+
+    // Verify statistics after requeue
+    const afterRequeueStats = await bus.getDLQStats(traceId);
+    expect(afterRequeueStats.total).toBe(1);
+    expect(afterRequeueStats.byEvent).toEqual({
+      'order.created': 1,
+    });
+    expect(afterRequeueStats.oldest).toBeInstanceOf(Date);
+    expect(afterRequeueStats.newest).toBeInstanceOf(Date);
+
+    // The timestamp of the new record should be later than the original record
+    expect(afterRequeueStats.newest!.getTime()).toBeGreaterThan(afterFailureStats.newest!.getTime());
+
+    // Purge DLQ record
+    await bus.purgeDLQ(traceId, afterRequeue[0].id);
+
+    // Verify no DLQ records after purge
+    const afterPurge = await bus.listDLQ(traceId);
+    expect(afterPurge.length).toBe(0);
+
+    // Verify statistics after purge
+    const afterPurgeStats = await bus.getDLQStats(traceId);
+    expect(afterPurgeStats.total).toBe(0);
+    expect(afterPurgeStats.byEvent).toEqual({});
+    expect(afterPurgeStats.oldest).toBeNull();
+    expect(afterPurgeStats.newest).toBeNull();
+
+    // Verify global statistics are also correct
+    const globalStats = await bus.getDLQStats();
+    expect(globalStats.total).toBe(0);
+    expect(globalStats.byEvent).toEqual({});
+    expect(globalStats.oldest).toBeNull();
+    expect(globalStats.newest).toBeNull();
+  });
+
+  describe('getDLQStats', () => {
+    let store: InMemoryEventStore;
+    let bus: EventBus<any>;
+
+    beforeEach(() => {
+      store = new InMemoryEventStore();
+      bus = new EventBus(store);
+    });
+
+    it('should return correct statistics for empty DLQ', async () => {
+      const stats = await bus.getDLQStats();
+
+      expect(stats).toEqual({
+        byEvent: {},
+        newest: null,
+        oldest: null,
+        total: 0,
+      });
+    });
+
+    it('should correctly count DLQ records for a single traceId', async () => {
+      const traceId = 'trace_test_1';
+
+      // Create some DLQ records
+      await store.save({
+        context: {},
+        error: 'Processing failed',
+        id: 'dlq_1',
+        name: 'order.created',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 5000,
+        traceId,
+        version: 1,
+      });
+
+      await store.save({
+        context: {},
+        error: 'Cancellation failed',
+        id: 'dlq_2',
+        name: 'order.cancelled',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 3000,
+        traceId,
+        version: 1,
+      });
+
+      await store.save({
+        context: {},
+        error: 'Failed again',
+        id: 'dlq_3',
+        name: 'order.created',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 1000,
+        traceId,
+        version: 1,
+      });
+
+      const stats = await bus.getDLQStats(traceId);
+
+      expect(stats.total).toBe(3);
+      expect(stats.byEvent).toEqual({
+        'order.cancelled': 1,
+        'order.created': 2,
+      });
+      expect(stats.oldest).toBeInstanceOf(Date);
+      expect(stats.newest).toBeInstanceOf(Date);
+      expect(stats.newest!.getTime()).toBeGreaterThan(stats.oldest!.getTime());
+    });
+
+    it('should correctly count DLQ records for multiple traceIds', async () => {
+      const traceId1 = 'trace_test_1';
+      const traceId2 = 'trace_test_2';
+
+      // Create records for the first traceId
+      await store.save({
+        context: {},
+        error: 'Processing failed',
+        id: 'dlq_1',
+        name: 'order.created',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 5000,
+        traceId: traceId1,
+        version: 1,
+      });
+
+      await store.save({
+        context: {},
+        error: 'Payment failed',
+        id: 'dlq_2',
+        name: 'payment.failed',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 3000,
+        traceId: traceId1,
+        version: 1,
+      });
+
+      // Create records for the second traceId
+      await store.save({
+        context: {},
+        error: 'Processing failed',
+        id: 'dlq_3',
+        name: 'order.created',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now() - 2000,
+        traceId: traceId2,
+        version: 1,
+      });
+
+      // Test statistics for the first traceId
+      const stats1 = await bus.getDLQStats(traceId1);
+      expect(stats1.total).toBe(2);
+      expect(stats1.byEvent).toEqual({
+        'order.created': 1,
+        'payment.failed': 1,
+      });
+
+      // Test statistics for the second traceId
+      const stats2 = await bus.getDLQStats(traceId2);
+      expect(stats2.total).toBe(1);
+      expect(stats2.byEvent).toEqual({
+        'order.created': 1,
+      });
+
+      // Test global statistics (all traceIds)
+      const globalStats = await bus.getDLQStats();
+      expect(globalStats.total).toBe(3);
+      expect(globalStats.byEvent).toEqual({
+        'order.created': 2,
+        'payment.failed': 1,
+      });
+    });
+
+    it('should correctly calculate time range', async () => {
+      const traceId = 'trace_time_test';
+      const now = Date.now();
+
+      const records = [
+        {
+          context: {},
+          error: 'Failure 1',
+          id: 'dlq_oldest',
+          name: 'order.created',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 5000,
+          traceId,
+          version: 1,
+        },
+        {
+          context: {},
+          error: 'Failure 2',
+          id: 'dlq_middle',
+          name: 'order.updated',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 3000,
+          traceId,
+          version: 1,
+        },
+        {
+          context: {},
+          error: 'Failure 3',
+          id: 'dlq_newest',
+          name: 'order.cancelled',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 1000,
+          traceId,
+          version: 1,
+        },
+      ];
+
+      for (const record of records) {
+        await store.save(record);
+      }
+
+      const stats = await bus.getDLQStats(traceId);
+
+      expect(stats.oldest).toEqual(new Date(now - 5000));
+      expect(stats.newest).toEqual(new Date(now - 1000));
+    });
+
+    it('should ignore records with non-DLQ states', async () => {
+      const traceId = 'trace_mixed_test';
+
+      // DLQ record
+      await store.save({
+        context: {},
+        error: 'Processing failed',
+        id: 'dlq_1',
+        name: 'order.created',
+        result: null,
+        state: EventState.DeadLetter,
+        timestamp: Date.now(),
+        traceId,
+        version: 1,
+      });
+
+      // Non-DLQ record (should be ignored)
+      await store.save({
+        context: {},
+        error: null,
+        id: 'success_1',
+        name: 'order.created',
+        result: { success: true },
+        state: EventState.Succeeded,
+        timestamp: Date.now(),
+        traceId,
+        version: 1,
+      });
+
+      await store.save({
+        context: {},
+        error: 'Processing failed',
+        id: 'failed_1',
+        name: 'order.created',
+        result: null,
+        state: EventState.Failed,
+        timestamp: Date.now(),
+        traceId,
+        version: 1,
+      });
+
+      const stats = await bus.getDLQStats(traceId);
+
+      expect(stats.total).toBe(1);
+      expect(stats.byEvent).toEqual({
+        'order.created': 1,
+      });
+    });
+
+    it('should return empty statistics when there is no store', async () => {
+      const busWithoutStore = new EventBus();
+
+      const stats = await busWithoutStore.getDLQStats();
+
+      expect(stats).toEqual({
+        byEvent: {},
+        newest: null,
+        oldest: null,
+        total: 0,
+      });
+    });
+
+    it('should handle storage exceptions correctly', async () => {
+      // Create a mock store that throws errors
+      const faultyStore = {
+        clear: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+        load: () => Promise.reject(new Error('Database error')),
+        loadByName: () => Promise.resolve([]),
+        loadByTimeRange: () => Promise.reject(new Error('Database error')),
+        save: () => Promise.resolve(),
+      };
+
+      const busWithFaultyStore = new EventBus(faultyStore as any);
+
+      // Should return empty statistics instead of throwing an error
+      const stats = await busWithFaultyStore.getDLQStats();
+
+      expect(stats).toEqual({
+        byEvent: {},
+        newest: null,
+        oldest: null,
+        total: 0,
+      });
+    });
+
+    it('should correctly sort records (by timestamp descending)', async () => {
+      const traceId = 'trace_sort_test';
+      const now = Date.now();
+
+      const records = [
+        {
+          context: {},
+          error: 'Failure',
+          id: 'dlq_1',
+          name: 'event.old',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 10000,
+          traceId,
+          version: 1,
+        },
+        {
+          context: {},
+          error: 'Failure',
+          id: 'dlq_2',
+          name: 'event.new',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 1000,
+          traceId,
+          version: 1,
+        },
+        {
+          context: {},
+          error: 'Failure',
+          id: 'dlq_3',
+          name: 'event.middle',
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: now - 5000,
+          traceId,
+          version: 1,
+        },
+      ];
+
+      for (const record of records) {
+        await store.save(record);
+      }
+
+      const stats = await bus.getDLQStats(traceId);
+
+      // Verify statistics
+      expect(stats.total).toBe(3);
+      expect(stats.oldest).toEqual(new Date(now - 10000));
+      expect(stats.newest).toEqual(new Date(now - 1000));
+      expect(stats.byEvent).toEqual({
+        'event.middle': 1,
+        'event.new': 1,
+        'event.old': 1,
+      });
     });
   });
 });

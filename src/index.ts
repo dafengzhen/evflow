@@ -9,6 +9,7 @@ import type {
   EventMap,
   EventMiddleware,
   EventMigrator,
+  EventRecord,
   EventStore,
   EventTaskOptions,
   PlainObject,
@@ -35,7 +36,7 @@ export class EventBus<EM extends EventMap> {
 
   private migrators = new Map<keyof EM, Map<number, EventMigrator<any>>>(); // key: fromVersion
 
-  private nodeId: string;
+  private readonly nodeId: string;
 
   private readonly store?: EventStore;
 
@@ -173,8 +174,60 @@ export class EventBus<EM extends EventMap> {
     return results;
   }
 
+  async getDLQStats(traceId?: string): Promise<{
+    byEvent: Record<string, number>;
+    newest: Date | null;
+    oldest: Date | null;
+    total: number;
+  }> {
+    const dlqRecords = await this.listDLQ(traceId);
+
+    const byEvent: Record<string, number> = {};
+    let oldest: null | number = null;
+    let newest: null | number = null;
+
+    dlqRecords.forEach((record) => {
+      byEvent[record.name] = (byEvent[record.name] || 0) + 1;
+
+      if (!oldest || record.timestamp < oldest) {
+        oldest = record.timestamp;
+      }
+      if (!newest || record.timestamp > newest) {
+        newest = record.timestamp;
+      }
+    });
+
+    return {
+      byEvent,
+      newest: newest ? new Date(newest) : null,
+      oldest: oldest ? new Date(oldest) : null,
+      total: dlqRecords.length,
+    };
+  }
+
   getNodeId(): string {
     return this.nodeId;
+  }
+
+  async listDLQ(traceId?: string): Promise<EventRecord[]> {
+    if (!this.store) {
+      return [];
+    }
+
+    try {
+      let records: EventRecord[];
+
+      if (traceId) {
+        records = await this.store.load(traceId);
+      } else {
+        records = await this.store.loadByTimeRange(Date.now() - 24 * 60 * 60 * 1000, Date.now());
+      }
+
+      return records.filter((r) => r.state === EventState.DeadLetter).sort((a, b) => b.timestamp - a.timestamp);
+    } catch (err) {
+      console.error('Failed to load DLQ records:', err);
+      return [];
+    }
   }
 
   off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>, version?: number) {
@@ -200,6 +253,55 @@ export class EventBus<EM extends EventMap> {
     arr.push({ handler, version });
     this.handlers.set(eventName, arr);
     return () => this.off(eventName, handler);
+  }
+
+  async purgeDLQ(traceId: string, dlqId: string, reason?: string): Promise<boolean> {
+    if (!this.store) {
+      throw new Error('EventStore is required to purge DLQ items');
+    }
+
+    const records = await this.store.load(traceId);
+    const dlq = records.find((r) => r.id === dlqId && r.state === EventState.DeadLetter);
+
+    if (!dlq) {
+      return false;
+    }
+
+    await this.store.delete(traceId, dlqId);
+
+    await this.store.save({
+      context: {
+        originalDlqId: dlqId,
+        purgedAt: Date.now(),
+        purgedReason: reason || 'manual_purge',
+      },
+      error: null,
+      id: `purge_${dlqId}_${Date.now()}`,
+      name: `dlq.purge`,
+      result: null,
+      state: EventState.Cancelled,
+      timestamp: Date.now(),
+      traceId,
+      version: 1,
+    });
+
+    return true;
+  }
+
+  async purgeMultipleDLQ(
+    traceId: string,
+    dlqIds: string[],
+  ): Promise<Array<{ error?: string; id: string; success: boolean }>> {
+    const results = [];
+    for (const dlqId of dlqIds) {
+      try {
+        const success = await this.purgeDLQ(traceId, dlqId);
+        results.push({ id: dlqId, success });
+      } catch (err) {
+        results.push({ error: err instanceof Error ? err.message : String(err), id: dlqId, success: false });
+      }
+    }
+    return results;
   }
 
   registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>) {
@@ -231,6 +333,96 @@ export class EventBus<EM extends EventMap> {
     if (index > -1) {
       this.broadcastFilters.splice(index, 1);
     }
+  }
+
+  async requeueDLQ(traceId: string, dlqId: string, emitOptions?: EmitOptions, taskOptions?: EventTaskOptions) {
+    if (!this.store) {
+      throw new Error('EventStore is required');
+    }
+
+    const records = await this.store.load(traceId);
+    const dlq = records.find((r) => r.id === dlqId && r.state === EventState.DeadLetter);
+    if (!dlq) {
+      throw new Error(`DLQ record ${dlqId} not found`);
+    }
+
+    const requeueCount = (dlq.context.requeueCount as number) || 0;
+    const maxRequeue = (dlq.context.maxRequeue as number) || 5;
+
+    if (requeueCount >= maxRequeue) {
+      throw new Error(`DLQ record ${dlqId} has exceeded maximum requeue count (${maxRequeue})`);
+    }
+
+    const ctx: EventContext<any> = {
+      ...dlq.context,
+      disableAutoDLQ: true,
+      parentId: dlq.id,
+      requeueCount: requeueCount + 1,
+      timestamp: Date.now(),
+      traceId: dlq.traceId,
+    };
+
+    const requeueTaskOptions: EventTaskOptions = {
+      retries: 0,
+      ...taskOptions,
+    };
+
+    try {
+      const results = await this.emit(dlq.name, ctx, requeueTaskOptions, emitOptions);
+      const hasError = results.some((r) => r.error);
+
+      if (hasError) {
+        const newDlqRecord: EventRecord = {
+          context: ctx,
+          error: results.find((r) => r.error)?.error,
+          id: `requeue_${requeueCount + 1}_${dlqId}_${Date.now()}`,
+          name: dlq.name,
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: Date.now(),
+          traceId: dlq.traceId,
+          version: dlq.version,
+        };
+        await this.store.save(newDlqRecord);
+      }
+
+      await this.store.delete?.(traceId, dlqId);
+      return results;
+    } catch (err) {
+      if (requeueCount < maxRequeue) {
+        const newDlqRecord: EventRecord = {
+          context: ctx as PlainObject,
+          error: err instanceof Error ? err.message : String(err),
+          id: `requeue_${requeueCount + 1}_${dlqId}_${Date.now()}`,
+          name: dlq.name,
+          result: null,
+          state: EventState.DeadLetter,
+          timestamp: Date.now(),
+          traceId: dlq.traceId,
+          version: dlq.version,
+        };
+        await this.store.save(newDlqRecord);
+      }
+
+      await this.store.delete?.(traceId, dlqId);
+      throw err;
+    }
+  }
+
+  async requeueMultipleDLQ(
+    traceId: string,
+    dlqIds: string[],
+  ): Promise<Array<{ error?: string; id: string; success: boolean }>> {
+    const results = [];
+    for (const dlqId of dlqIds) {
+      try {
+        await this.requeueDLQ(traceId, dlqId);
+        results.push({ id: dlqId, success: true });
+      } catch (err) {
+        results.push({ error: err instanceof Error ? err.message : String(err), id: dlqId, success: false });
+      }
+    }
+    return results;
   }
 
   async subscribeBroadcast(channels: string | string[], options: { adapter?: string } = {}): Promise<void> {
@@ -293,6 +485,31 @@ export class EventBus<EM extends EventMap> {
         const result = await task.run({ ...context, parentId: context.id });
         return { handlerIndex: idx, result, state: task.state, traceId: context.traceId! };
       } catch (err) {
+        try {
+          const exhausted = task.attempts >= (task.opts?.retries ?? 1);
+          const isRetryable = task.opts?.isRetryable ? task.opts.isRetryable(err) : true;
+          const disableAutoDLQ = context.disableAutoDLQ === true;
+
+          if ((!isRetryable || exhausted) && !disableAutoDLQ) {
+            if (this.store) {
+              const rec: EventRecord = {
+                context: context as PlainObject,
+                error: err instanceof Error ? err.message : String(err),
+                id: `${context.name}_${idx}_${Date.now()}`,
+                name: String(context.name),
+                result: null,
+                state: EventState.DeadLetter,
+                timestamp: Date.now(),
+                traceId: context.traceId!,
+                version: context.version,
+              };
+              await this.moveToDLQ(rec);
+            }
+          }
+        } catch (dlqErr) {
+          console.error('DLQ handling failed:', dlqErr);
+        }
+
         return { error: err, handlerIndex: idx, state: task.state, traceId: context.traceId! };
       }
     };
@@ -414,6 +631,27 @@ export class EventBus<EM extends EventMap> {
     return ctx;
   }
 
+  private async moveToDLQ(record: EventRecord): Promise<void> {
+    if (!this.store) {
+      return;
+    }
+
+    const dlqRecord: EventRecord = {
+      ...record,
+      id: `dlq_${record.id}_${Date.now()}`,
+      name: record.name,
+      state: EventState.DeadLetter,
+      timestamp: Date.now(),
+      traceId: record.traceId,
+    };
+
+    try {
+      await this.store.save(dlqRecord);
+    } catch (err) {
+      console.error('Failed to save DLQ record:', err);
+    }
+  }
+
   private async runWithMiddlewares<K extends keyof EM, R>(
     context: EventContext<EM[K]>,
     handler: EventHandler<EM[K], R>,
@@ -452,17 +690,21 @@ export class EventBus<EM extends EventMap> {
  * @author dafengzhen
  */
 export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
+  public attempts = 0;
+
   public readonly id: string;
 
+  public lastError: any = null;
+
   public readonly name?: string;
+
+  public readonly opts: Required<EventTaskOptions>;
 
   public state: EventState = EventState.Idle;
 
   private cancelled = false;
 
   private readonly handler: EventHandler<Ctx, R>;
-
-  private readonly opts: Required<EventTaskOptions>;
 
   constructor(handler: EventHandler<Ctx, R>, opts?: EventTaskOptions) {
     this.id = opts?.id ?? `evt_${Math.random().toString(36).slice(2, 9)}`;
@@ -504,28 +746,27 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     this._setState(EventState.Running, { context });
 
     const maxAttempts = Math.max(1, Math.floor(this.opts.retries));
-    let attempt = 0;
+    this.attempts = 0;
     let lastErr: any = null;
 
-    while (attempt < maxAttempts && !this.cancelled) {
-      attempt++;
+    while (this.attempts < maxAttempts && !this.cancelled) {
+      this.attempts++;
       try {
         const result = await this._executeOnce(context);
         if (this.cancelled) {
           // noinspection ExceptionCaughtLocallyJS
           throw new EventCancelledError();
         }
-
-        this._setState(EventState.Succeeded, { attempt, result });
+        this._setState(EventState.Succeeded, { attempt: this.attempts, result });
         return result;
       } catch (err) {
         lastErr = err;
-        this._setState(EventState.Failed, { attempt, error: err });
-        if (!this.opts.isRetryable(err) || attempt >= maxAttempts || this.cancelled) {
+        this.lastError = err;
+        this._setState(EventState.Failed, { attempt: this.attempts, error: err });
+        if (!this.opts.isRetryable(err) || this.attempts >= maxAttempts || this.cancelled) {
           break;
         }
-
-        const delay = Math.round(this.opts.retryDelay * Math.pow(this.opts.retryBackoff, attempt - 1));
+        const delay = Math.round(this.opts.retryDelay * Math.pow(this.opts.retryBackoff, this.attempts - 1));
         await new Promise((r) => setTimeout(r, delay));
       }
     }
@@ -535,7 +776,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     }
 
     this._setState(lastErr instanceof EventTimeoutError ? EventState.Timeout : EventState.Failed, {
-      attempts: attempt,
+      attempts: this.attempts,
       error: lastErr,
     });
     throw lastErr;

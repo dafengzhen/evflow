@@ -1,5 +1,6 @@
 export enum EventState {
   Cancelled = 'cancelled',
+  DeadLetter = 'deadletter',
   Failed = 'failed',
   Idle = 'idle',
   Running = 'running',
@@ -49,12 +50,15 @@ export interface EventContext<T extends PlainObject = PlainObject> {
   broadcastChannels?: string[];
   broadcastId?: string;
   broadcastSource?: string;
+  disableAutoDLQ?: boolean;
   excludeSelf?: boolean;
   id?: string;
+  maxRequeue?: number;
   meta?: T;
   name?: string;
   parentId?: string;
   receivedAt?: number;
+  requeueCount?: number;
   timestamp?: number;
   traceId?: string;
   version?: number;
@@ -88,7 +92,11 @@ export interface EventRecord {
 }
 
 export interface EventStore {
+  clear(): Promise<void>;
+  delete(traceId: string, id: string): Promise<void>;
   load(traceId: string): Promise<EventRecord[]>;
+  loadByName(name: string): Promise<EventRecord[]>;
+  loadByTimeRange(start: number, end: number): Promise<EventRecord[]>;
   save(record: EventRecord): Promise<void>;
 }
 
