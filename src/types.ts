@@ -36,6 +36,8 @@ export type EventMiddleware<Ctx extends PlainObject = PlainObject, R = any> = (
   next: () => Promise<R>,
 ) => Promise<R>;
 
+export type EventMigrator<Ctx extends PlainObject = PlainObject> = (context: EventContext<Ctx>) => EventContext<Ctx>;
+
 export interface EventRecord {
   context: PlainObject;
   error?: any;

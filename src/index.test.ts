@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { EventContext } from './types.ts';
+
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
 import { InMemoryEventStore } from './in-memory-event-store.js';
@@ -9,6 +11,10 @@ import { EventState } from './types.ts';
 type Events = {
   bar: { x: number };
   foo: { msg: string };
+};
+
+type MyEvents = {
+  userCreated: { age?: number; name: string };
 };
 
 /**
@@ -259,6 +265,100 @@ describe('EventBus - Middleware System', () => {
 
     expect(spyPerf).toHaveBeenCalled();
     expect(spyPerf.mock.calls[0][0]).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe('EventBus - Event Version Migration', () => {
+  it('should migrate old version events to new version and execute new version handler', async () => {
+    const bus = new EventBus<MyEvents>();
+
+    // v1 handler
+    const v1Handler = vi.fn(() => {
+      // Should not be called
+    });
+    bus.on('userCreated', v1Handler, 1);
+
+    // v2 handler
+    const v2Handler = vi.fn((ctx: EventContext<MyEvents['userCreated']>) => {
+      return ctx.meta?.age;
+    });
+    bus.on('userCreated', v2Handler, 2);
+
+    // Register migrator v1 -> v2
+    bus.registerMigrator('userCreated', 1, (ctx) => ({
+      ...ctx,
+      meta: { ...ctx.meta!, age: ctx.meta?.age ?? 18 },
+    }));
+
+    const results = await bus.emit('userCreated', { meta: { name: 'Alice' }, version: 1 });
+
+    expect(v1Handler).not.toHaveBeenCalled(); // Old version handler should not execute
+    expect(v2Handler).toHaveBeenCalledOnce();
+    expect(v2Handler.mock.calls[0][0].meta).toEqual({ age: 18, name: 'Alice' });
+    expect(results[0].result).toBe(18);
+  });
+
+  it('new version events should directly execute corresponding handler', async () => {
+    const bus = new EventBus<MyEvents>();
+
+    const v2Handler = vi.fn((ctx: EventContext<MyEvents['userCreated']>) => ctx.meta?.name);
+    bus.on('userCreated', v2Handler, 2);
+
+    const results = await bus.emit('userCreated', { meta: { name: 'Bob' }, version: 2 });
+
+    expect(v2Handler).toHaveBeenCalledOnce();
+    expect(v2Handler.mock.calls[0][0].meta).toEqual({ name: 'Bob' });
+    expect(results[0].result).toBe('Bob');
+  });
+
+  it('should execute old version handler when migrator is missing', async () => {
+    const bus = new EventBus<MyEvents>();
+
+    const v1Handler = vi.fn((ctx: EventContext<MyEvents['userCreated']>) => ctx.meta?.name);
+    bus.on('userCreated', v1Handler, 1);
+
+    const results = await bus.emit('userCreated', { meta: { name: 'Carol' }, version: 1 });
+
+    expect(v1Handler).toHaveBeenCalledOnce();
+    expect(results[0].result).toBe('Carol');
+  });
+
+  it('supports multi-level migration v1 -> v2 -> v3', async () => {
+    type MultiEvents = {
+      itemCreated: { category?: string; name: string; quantity?: number };
+    };
+
+    const bus = new EventBus<MultiEvents>();
+
+    // v3 handler
+    const v3Handler = vi.fn((ctx: EventContext<MultiEvents['itemCreated']>) => ctx.meta);
+    bus.on('itemCreated', v3Handler, 3);
+
+    // v1 -> v2
+    bus.registerMigrator('itemCreated', 1, (ctx) => ({
+      ...ctx,
+      meta: { ...ctx.meta!, quantity: ctx.meta?.quantity ?? 1 },
+    }));
+
+    // v2 -> v3
+    bus.registerMigrator('itemCreated', 2, (ctx) => ({
+      ...ctx,
+      meta: { ...ctx.meta!, category: 'default' },
+    }));
+
+    const results = await bus.emit('itemCreated', { meta: { name: 'Item1' }, version: 1 });
+
+    expect(v3Handler).toHaveBeenCalledOnce();
+    expect(v3Handler.mock.calls[0][0].meta).toEqual({
+      category: 'default',
+      name: 'Item1',
+      quantity: 1,
+    });
+    expect(results[0].result).toEqual({
+      category: 'default',
+      name: 'Item1',
+      quantity: 1,
+    });
   });
 });
 

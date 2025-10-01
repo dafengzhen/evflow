@@ -4,6 +4,7 @@ import type {
   EventHandler,
   EventMap,
   EventMiddleware,
+  EventMigrator,
   EventStore,
   EventTaskOptions,
   PlainObject,
@@ -23,6 +24,8 @@ export class EventBus<EM extends EventMap> {
   private handlers = new Map<keyof EM, Array<VersionedHandler<any, any>>>();
 
   private middlewares = new Map<keyof EM, Array<EventMiddleware<any, any>>>();
+
+  private migrators = new Map<keyof EM, Map<number, EventMigrator<any>>>(); // key: fromVersion
 
   private readonly store?: EventStore;
 
@@ -44,25 +47,27 @@ export class EventBus<EM extends EventMap> {
       version: context.version ?? 1,
     };
 
-    const handlers = this.getHandlers(eventName, context.version!);
+    const migratedContext = this.migrateContext(eventName, context);
+
+    const handlers = this.getHandlers(eventName, migratedContext.version!);
 
     const results = await this.withGlobalTimeout(
-      this.executeHandlers(handlers, context, taskOptions, emitOptions),
+      this.executeHandlers(handlers, migratedContext, taskOptions, emitOptions),
       <number>emitOptions.globalTimeout,
     );
 
     if (this.store) {
       for (const r of results) {
         await this.store.save({
-          context,
+          context: migratedContext,
           error: r.error,
-          id: `${context.name}_${r.handlerIndex}`,
-          name: context.name!,
+          id: `${migratedContext.name}_${r.handlerIndex}`,
+          name: migratedContext.name!,
           result: r.result,
           state: r.state,
-          timestamp: context.timestamp!,
-          traceId: context.traceId!,
-          version: context.version ?? 1,
+          timestamp: migratedContext.timestamp!,
+          traceId: migratedContext.traceId!,
+          version: migratedContext.version ?? 1,
         });
       }
     }
@@ -93,6 +98,13 @@ export class EventBus<EM extends EventMap> {
     arr.push({ handler, version });
     this.handlers.set(eventName, arr);
     return () => this.off(eventName, handler);
+  }
+
+  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>) {
+    if (!this.migrators.has(eventName)) {
+      this.migrators.set(eventName, new Map());
+    }
+    this.migrators.get(eventName)!.set(fromVersion, migrator);
   }
 
   use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>) {
@@ -151,8 +163,35 @@ export class EventBus<EM extends EventMap> {
     return (this.handlers.get(eventName) ?? []).filter((h) => h.version === version).map((h) => h.handler);
   }
 
+  private getLatestHandler<K extends keyof EM>(eventName: K) {
+    const arr = this.handlers.get(eventName) ?? [];
+    if (!arr.length) {
+      return null;
+    }
+    return arr.reduce((prev, cur) => (cur.version > prev.version ? cur : prev));
+  }
+
   private getMiddlewares<K extends keyof EM>(eventName: K) {
     return this.middlewares.get(eventName) ?? [];
+  }
+
+  private migrateContext<K extends keyof EM>(eventName: K, context: EventContext<EM[K]>): EventContext<EM[K]> {
+    let ctx = { ...context };
+    const latest = this.getLatestHandler(eventName);
+    if (!latest) {
+      return ctx;
+    }
+
+    while (ctx.version! < latest.version) {
+      const migrator = this.migrators.get(eventName)?.get(ctx.version!);
+      if (!migrator) {
+        break;
+      }
+      ctx = migrator(ctx);
+      ctx.version = ctx.version! + 1;
+    }
+
+    return ctx;
   }
 
   private async runWithMiddlewares<K extends keyof EM, R>(
