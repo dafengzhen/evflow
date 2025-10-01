@@ -7,6 +7,37 @@ export enum EventState {
   Timeout = 'timeout',
 }
 
+export interface BroadcastAdapter<EM extends EventMap = EventMap> {
+  disconnect?(): Promise<void>;
+  name: string;
+  publish(channel: string, message: BroadcastMessage<EM>): Promise<void>;
+  subscribe(channel: string, callback: (message: BroadcastMessage<EM>) => void): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
+}
+
+export interface BroadcastFilter {
+  (message: BroadcastMessage): boolean | Promise<boolean>;
+}
+
+export interface BroadcastMessage<EM extends EventMap = EventMap> {
+  broadcastId: string;
+  context: EventContext<EM[keyof EM]>;
+  eventName: keyof EM;
+  id: string;
+  source: string;
+  timestamp: number;
+  traceId: string;
+  version: number;
+}
+
+export interface BroadcastOptions {
+  adapters?: string[];
+  channels?: string[];
+  excludeSelf?: boolean;
+  persistent?: boolean;
+  ttl?: number;
+}
+
 export interface EmitOptions {
   globalTimeout?: number;
   parallel?: boolean;
@@ -14,10 +45,16 @@ export interface EmitOptions {
 }
 
 export interface EventContext<T extends PlainObject = PlainObject> {
+  broadcast?: boolean;
+  broadcastChannels?: string[];
+  broadcastId?: string;
+  broadcastSource?: string;
+  excludeSelf?: boolean;
   id?: string;
   meta?: T;
   name?: string;
   parentId?: string;
+  receivedAt?: number;
   timestamp?: number;
   traceId?: string;
   version?: number;

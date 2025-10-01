@@ -12,11 +12,11 @@ const store = new InMemoryEventStore();
 const bus = new EventBus<MyEvents>(store);
 
 bus.on('userCreated', async (ctx) => {
-  console.log('处理 userCreated:', ctx.meta);
+  console.log('Processing userCreated:', ctx.meta);
   return { status: 'ok' };
 });
 
 await bus.emit('userCreated', { meta: { name: 'Alice', userId: 'u1' } });
 
 const records = await store.loadByName('userCreated');
-console.log('审计日志:', records);
+console.log('Audit log:', records);

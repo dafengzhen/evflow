@@ -160,6 +160,11 @@ describe('EventBus - Versioning', () => {
   });
 });
 
+/**
+ * EventBus - Middleware System.
+ *
+ * @author dafengzhen
+ */
 describe('EventBus - Middleware System', () => {
   type TestEvent = { testEvent: { payload: any; userRole: string } };
   let bus: EventBus<TestEvent>;
@@ -268,6 +273,11 @@ describe('EventBus - Middleware System', () => {
   });
 });
 
+/**
+ * EventBus - Event Version Migration.
+ *
+ * @author dafengzhen
+ */
 describe('EventBus - Event Version Migration', () => {
   it('should migrate old version events to new version and execute new version handler', async () => {
     const bus = new EventBus<MyEvents>();

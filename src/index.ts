@@ -1,4 +1,8 @@
 import type {
+  BroadcastAdapter,
+  BroadcastFilter,
+  BroadcastMessage,
+  BroadcastOptions,
   EmitOptions,
   EventContext,
   EventHandler,
@@ -21,16 +25,110 @@ import { EventState } from './types.js';
  * @author dafengzhen
  */
 export class EventBus<EM extends EventMap> {
+  private broadcastAdapters: Map<string, BroadcastAdapter> = new Map();
+
+  private broadcastFilters: BroadcastFilter[] = [];
+
   private handlers = new Map<keyof EM, Array<VersionedHandler<any, any>>>();
 
   private middlewares = new Map<keyof EM, Array<EventMiddleware<any, any>>>();
 
   private migrators = new Map<keyof EM, Map<number, EventMigrator<any>>>(); // key: fromVersion
 
+  private nodeId: string;
+
   private readonly store?: EventStore;
+
+  private subscribedChannels: Set<string> = new Set();
 
   constructor(store?: EventStore) {
     this.store = store;
+    this.nodeId = `node_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
+  }
+
+  addBroadcastAdapter(adapter: BroadcastAdapter): void {
+    this.broadcastAdapters.set(adapter.name, adapter);
+  }
+
+  addBroadcastFilter(filter: BroadcastFilter): void {
+    this.broadcastFilters.push(filter);
+  }
+
+  async broadcast<K extends keyof EM>(
+    eventName: K,
+    context: EventContext<EM[K]> = {},
+    broadcastOptions: BroadcastOptions = {},
+    emitOptions: EmitOptions = {},
+  ): Promise<Array<{ error?: any; handlerIndex: number; result?: any; state: EventState; traceId: string }>> {
+    // 1. Execute locally first
+    const localResults = await this.emit(eventName, context, undefined, emitOptions);
+
+    // 2. Prepare broadcast message
+    const broadcastId = `broadcast_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const broadcastMessage: BroadcastMessage = {
+      broadcastId,
+      context: {
+        ...context,
+        broadcast: true,
+        broadcastChannels: broadcastOptions.channels || ['default'],
+        broadcastId,
+        broadcastSource: this.nodeId,
+        excludeSelf: broadcastOptions.excludeSelf ?? true,
+        name: context.name ?? String(eventName),
+        timestamp: context.timestamp ?? Date.now(),
+        traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
+        version: context.version ?? 1,
+      },
+      eventName: String(eventName),
+      id: broadcastId,
+      source: this.nodeId,
+      timestamp: Date.now(),
+      traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
+      version: context.version ?? 1,
+    };
+
+    // 3. Send to all specified adapters
+    const channels = broadcastOptions.channels || ['default'];
+    const adaptersToUse = this.getAdaptersToUse(broadcastOptions.adapters);
+
+    if (adaptersToUse.length > 0) {
+      const broadcastPromises: Promise<void>[] = [];
+
+      for (const adapter of adaptersToUse) {
+        for (const channel of channels) {
+          broadcastPromises.push(
+            adapter.publish(channel, broadcastMessage).catch((error) => {
+              console.error(`Broadcast failed on adapter ${adapter.name}, channel ${channel}:`, error);
+              // Store broadcast failure if store is available
+              if (this.store) {
+                this.store
+                  .save({
+                    context: broadcastMessage.context,
+                    error: error.message,
+                    id: `broadcast_fail_${broadcastId}`,
+                    name: `broadcast.${String(eventName)}`,
+                    result: null,
+                    state: EventState.Failed,
+                    timestamp: Date.now(),
+                    traceId: broadcastMessage.traceId,
+                    version: broadcastMessage.version,
+                  })
+                  .catch(() => {
+                    /* Ignore store errors */
+                  });
+              }
+            }),
+          );
+        }
+      }
+
+      // Don't block on broadcast completion
+      if (broadcastPromises.length > 0) {
+        Promise.all(broadcastPromises).catch(console.error);
+      }
+    }
+
+    return localResults;
   }
 
   async emit<K extends keyof EM, R = any>(
@@ -75,6 +173,10 @@ export class EventBus<EM extends EventMap> {
     return results;
   }
 
+  getNodeId(): string {
+    return this.nodeId;
+  }
+
   off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>, version?: number) {
     if (!handler) {
       this.handlers.delete(eventName);
@@ -105,6 +207,61 @@ export class EventBus<EM extends EventMap> {
       this.migrators.set(eventName, new Map());
     }
     this.migrators.get(eventName)!.set(fromVersion, migrator);
+  }
+
+  removeBroadcastAdapter(name: string): void {
+    const adapter = this.broadcastAdapters.get(name);
+    if (adapter) {
+      // Unsubscribe from all channels
+      for (const channel of this.subscribedChannels) {
+        adapter.unsubscribe(channel).catch((error) => {
+          console.warn(`Failed to unsubscribe from channel ${channel} on adapter ${name}:`, error);
+        });
+      }
+      // Disconnect if supported
+      if (adapter.disconnect) {
+        adapter.disconnect().catch(console.error);
+      }
+      this.broadcastAdapters.delete(name);
+    }
+  }
+
+  removeBroadcastFilter(filter: BroadcastFilter): void {
+    const index = this.broadcastFilters.indexOf(filter);
+    if (index > -1) {
+      this.broadcastFilters.splice(index, 1);
+    }
+  }
+
+  async subscribeBroadcast(channels: string | string[], options: { adapter?: string } = {}): Promise<void> {
+    const channelList = Array.isArray(channels) ? channels : [channels];
+    const adapters = this.getAdaptersToUse(options.adapter ? [options.adapter] : undefined);
+
+    for (const adapter of adapters) {
+      for (const channel of channelList) {
+        if (this.subscribedChannels.has(channel)) {
+          continue;
+        }
+
+        await adapter.subscribe(channel, async (message: BroadcastMessage) => {
+          await this.handleIncomingBroadcast(message);
+        });
+
+        this.subscribedChannels.add(channel);
+      }
+    }
+  }
+
+  async unsubscribeBroadcast(channels: string | string[], adapterName?: string): Promise<void> {
+    const channelList = Array.isArray(channels) ? channels : [channels];
+    const adapters = this.getAdaptersToUse(adapterName ? [adapterName] : undefined);
+
+    for (const adapter of adapters) {
+      for (const channel of channelList) {
+        await adapter.unsubscribe(channel);
+        this.subscribedChannels.delete(channel);
+      }
+    }
   }
 
   use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>) {
@@ -159,6 +316,15 @@ export class EventBus<EM extends EventMap> {
     return exec();
   }
 
+  private getAdaptersToUse(adapterNames?: string[]): BroadcastAdapter[] {
+    if (adapterNames && adapterNames.length > 0) {
+      return adapterNames
+        .map((name) => this.broadcastAdapters.get(name))
+        .filter((adapter): adapter is BroadcastAdapter => adapter !== undefined);
+    }
+    return Array.from(this.broadcastAdapters.values());
+  }
+
   private getHandlers<K extends keyof EM>(eventName: K, version: number) {
     return (this.handlers.get(eventName) ?? []).filter((h) => h.version === version).map((h) => h.handler);
   }
@@ -173,6 +339,60 @@ export class EventBus<EM extends EventMap> {
 
   private getMiddlewares<K extends keyof EM>(eventName: K) {
     return this.middlewares.get(eventName) ?? [];
+  }
+
+  private async handleIncomingBroadcast(message: BroadcastMessage): Promise<void> {
+    try {
+      // Avoid processing our own messages if excludeSelf is true
+      const excludeSelf = message.context.excludeSelf ?? true;
+      if (excludeSelf && message.source === this.nodeId) {
+        return;
+      }
+
+      // Apply filters
+      for (const filter of this.broadcastFilters) {
+        try {
+          const shouldProcess = await filter(message);
+          if (!shouldProcess) {
+            return; // Filter rejected the message
+          }
+        } catch (error) {
+          console.error('Error in broadcast filter:', error);
+          // Continue processing if filter fails
+        }
+      }
+
+      // Execute the event with broadcast context
+      await this.emit(message.eventName, {
+        ...message.context,
+        broadcast: true,
+        broadcastId: message.broadcastId,
+        broadcastSource: message.source,
+        meta: message.context.meta as EM[keyof EM],
+        receivedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error(`Failed to handle broadcast message ${message.id}:`, error);
+
+      // Store broadcast handling failure if store is available
+      if (this.store) {
+        this.store
+          .save({
+            context: message.context,
+            error: error instanceof Error ? error.message : String(error),
+            id: `broadcast_handle_fail_${message.id}`,
+            name: `broadcast.handle.${message.eventName}`,
+            result: null,
+            state: EventState.Failed,
+            timestamp: Date.now(),
+            traceId: message.traceId,
+            version: message.version,
+          })
+          .catch(() => {
+            /* Ignore store errors */
+          });
+      }
+    }
   }
 
   private migrateContext<K extends keyof EM>(eventName: K, context: EventContext<EM[K]>): EventContext<EM[K]> {

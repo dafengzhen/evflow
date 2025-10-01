@@ -20,6 +20,7 @@ It is designed for building reliable event-driven applications where event handl
 - Event persistence
 - Event versioning
 - Event version migration
+- Event broadcast
 - Middleware system
 
 ## 📦 Installation
