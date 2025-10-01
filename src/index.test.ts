@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
+import { InMemoryEventStore } from './in-memory-event-store.js';
 import { EventBus, EventTask } from './index.js';
 import { EventState } from './types.ts';
 
@@ -71,6 +72,85 @@ describe('EventBus', () => {
     await expect(bus.emit('foo', { meta: { msg: 'zzz' } }, undefined, { globalTimeout: 10 })).rejects.toBeInstanceOf(
       EventTimeoutError,
     );
+  });
+});
+
+/**
+ * EventBus - Persistence.
+ *
+ * @author dafengzhen
+ */
+describe('EventBus - Persistence', () => {
+  it('persists events into EventStore', async () => {
+    const store = new InMemoryEventStore();
+    const bus = new EventBus<Events>(store);
+
+    const handler = vi.fn().mockResolvedValue('ok');
+    bus.on('foo', handler);
+
+    await bus.emit('foo', { meta: { msg: 'persist test' } });
+
+    const records = await store.loadByName('foo');
+    expect(records.length).toBe(1);
+    expect(records[0].context.meta?.msg).toBe('persist test');
+    expect(records[0].state).toBe(EventState.Succeeded);
+    expect(records[0].result).toBe('ok');
+  });
+
+  it('persists failed events with error info', async () => {
+    const store = new InMemoryEventStore();
+    const bus = new EventBus<Events>(store);
+
+    bus.on('foo', () => {
+      throw new Error('fail persist');
+    });
+
+    const results = await bus.emit('foo', { meta: { msg: 'fail case' } });
+    expect(results[0].error).toBeInstanceOf(Error);
+
+    const records = await store.loadByName('foo');
+    expect(records.length).toBe(1);
+    expect(records[0].error.message).toBe('fail persist');
+    expect(records[0].state).toBe(EventState.Failed);
+  });
+});
+
+/**
+ * EventBus - Versioning.
+ *
+ * @author dafengzhen
+ */
+describe('EventBus - Versioning', () => {
+  it('uses versioned handlers correctly', async () => {
+    const bus = new EventBus<Events>();
+
+    const hV1 = vi.fn().mockReturnValue('v1');
+    const hV2 = vi.fn().mockReturnValue('v2');
+
+    bus.on('foo', hV1, 1);
+    bus.on('foo', hV2, 2);
+
+    // emit v1
+    const r1 = await bus.emit('foo', { meta: { msg: 'hello' }, version: 1 });
+    expect(hV1).toHaveBeenCalled();
+    expect(hV2).not.toHaveBeenCalled();
+    expect(r1[0].result).toBe('v1');
+
+    // emit v2
+    const r2 = await bus.emit('foo', { meta: { msg: 'world' }, version: 2 });
+    expect(hV2).toHaveBeenCalled();
+    expect(r2[0].result).toBe('v2');
+  });
+
+  it('falls back to version 1 when no version is specified', async () => {
+    const bus = new EventBus<Events>();
+
+    const hV1 = vi.fn().mockReturnValue('default v1');
+    bus.on('foo', hV1, 1);
+
+    const r = await bus.emit('foo', { meta: { msg: 'no version' } });
+    expect(hV1).toHaveBeenCalled();
+    expect(r[0].result).toBe('default v1');
   });
 });
 

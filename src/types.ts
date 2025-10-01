@@ -20,6 +20,7 @@ export interface EventContext<T extends PlainObject = PlainObject> {
   parentId?: string;
   timestamp?: number;
   traceId?: string;
+  version?: number;
 }
 
 export type EventHandler<Ctx extends PlainObject = PlainObject, R = any> = (
@@ -28,6 +29,23 @@ export type EventHandler<Ctx extends PlainObject = PlainObject, R = any> = (
 
 export interface EventMap {
   [eventName: string]: PlainObject;
+}
+
+export interface EventRecord {
+  context: PlainObject;
+  error?: any;
+  id: string;
+  name: string;
+  result?: any;
+  state: EventState;
+  timestamp: number;
+  traceId: string;
+  version?: number;
+}
+
+export interface EventStore {
+  load(traceId: string): Promise<EventRecord[]>;
+  save(record: EventRecord): Promise<void>;
 }
 
 export interface EventTaskOptions {
@@ -42,3 +60,8 @@ export interface EventTaskOptions {
 }
 
 export type PlainObject = Record<string, any>;
+
+export type VersionedHandler<Ctx extends PlainObject, R = any> = {
+  handler: EventHandler<Ctx, R>;
+  version: number;
+};

@@ -17,6 +17,8 @@ EventBus 是一个轻量级、TypeScript 优先的事件系统，支持 异步�
 - 重试 + 回退策略
 - 任务可取消
 - 状态变更钩子
+- 事件持久化
+- 事件版本化
 
 ## 📦 安装
 
@@ -27,7 +29,7 @@ npm install evflow
 ## 🚀 使用示例
 
 ```ts
-import { EventBus, EventTask } from "evflow";
+import { EventBus, EventState } from "evflow";
 
 type MyEvents = {
   userLogin: { username: string };

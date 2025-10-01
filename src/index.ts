@@ -1,4 +1,13 @@
-import type { EmitOptions, EventContext, EventHandler, EventMap, EventTaskOptions, PlainObject } from './types.js';
+import type {
+  EmitOptions,
+  EventContext,
+  EventHandler,
+  EventMap,
+  EventStore,
+  EventTaskOptions,
+  PlainObject,
+  VersionedHandler,
+} from './types.js';
 
 import { EventCancelledError } from './event-cancelled-error.js';
 import { EventTimeoutError } from './event-timeout-error.js';
@@ -10,7 +19,12 @@ import { EventState } from './types.js';
  * @author dafengzhen
  */
 export class EventBus<EM extends EventMap> {
-  private handlers = new Map<keyof EM, Array<EventHandler<any, any>>>();
+  private handlers = new Map<keyof EM, Array<VersionedHandler<any, any>>>();
+  private readonly store?: EventStore;
+
+  constructor(store?: EventStore) {
+    this.store = store;
+  }
 
   async emit<K extends keyof EM, R = any>(
     eventName: K,
@@ -18,21 +32,74 @@ export class EventBus<EM extends EventMap> {
     taskOptions?: EventTaskOptions,
     emitOptions: EmitOptions = { globalTimeout: 0, parallel: true, stopOnError: false },
   ): Promise<Array<{ error?: any; handlerIndex: number; result?: R; state: EventState; traceId: string }>> {
-    const handlers = this.handlers.get(eventName) ?? [];
-
     context = {
       ...context,
       name: context.name ?? String(eventName),
       timestamp: context.timestamp ?? Date.now(),
       traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
+      version: context.version ?? 1,
     };
 
+    const handlers = this.getHandlers(eventName, context.version!);
+
+    const results = await this.withGlobalTimeout(
+      this.executeHandlers(handlers, context, taskOptions, emitOptions),
+      <number>emitOptions.globalTimeout,
+    );
+
+    if (this.store) {
+      for (const r of results) {
+        await this.store.save({
+          context,
+          error: r.error,
+          id: `${context.name}_${r.handlerIndex}`,
+          name: context.name!,
+          result: r.result,
+          state: r.state,
+          timestamp: context.timestamp!,
+          traceId: context.traceId!,
+          version: (context as any).version ?? 1,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>, version?: number) {
+    if (!handler) {
+      this.handlers.delete(eventName);
+      return;
+    }
+    const arr = this.handlers.get(eventName);
+    if (!arr) {
+      return;
+    }
+
+    const filtered = arr.filter((h) => h.handler !== handler || (version && h.version !== version));
+    if (filtered.length) {
+      this.handlers.set(eventName, filtered);
+    } else {
+      this.handlers.delete(eventName);
+    }
+  }
+
+  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>, version: number = 1) {
+    const arr = this.handlers.get(eventName) ?? [];
+    arr.push({ handler, version });
+    this.handlers.set(eventName, arr);
+    return () => this.off(eventName, handler);
+  }
+
+  private async executeHandlers<K extends keyof EM, R>(
+    handlers: EventHandler<EM[K], R>[],
+    context: EventContext<EM[K]>,
+    taskOptions?: EventTaskOptions,
+    emitOptions?: EmitOptions,
+  ) {
     const tasks = handlers.map((handler, idx) => ({
       idx,
-      task: new EventTask<EM[K], R>(handler as EventHandler<EM[K], R>, {
-        ...taskOptions,
-        id: `${context.name}_${idx}`,
-      }),
+      task: new EventTask(handler, { ...taskOptions, id: `${context.name}_${idx}` }),
     }));
 
     const runTask = async ({ idx, task }: { idx: number; task: EventTask<EM[K], R> }) => {
@@ -45,7 +112,7 @@ export class EventBus<EM extends EventMap> {
     };
 
     const exec = async () => {
-      if (emitOptions.parallel) {
+      if (emitOptions?.parallel) {
         return Promise.all(tasks.map(runTask));
       }
 
@@ -53,39 +120,18 @@ export class EventBus<EM extends EventMap> {
       for (const t of tasks) {
         const r = await runTask(t);
         results.push(r);
-        if (r.error && emitOptions.stopOnError) {
+        if (r.error && emitOptions?.stopOnError) {
           break;
         }
       }
       return results;
     };
 
-    return this.withGlobalTimeout(exec(), <number>emitOptions.globalTimeout);
+    return exec();
   }
 
-  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>) {
-    if (!handler) {
-      this.handlers.delete(eventName);
-      return;
-    }
-    const arr = this.handlers.get(eventName);
-    if (!arr) {
-      return;
-    }
-
-    const filtered = arr.filter((h) => h !== handler);
-    if (filtered.length) {
-      this.handlers.set(eventName, filtered);
-    } else {
-      this.handlers.delete(eventName);
-    }
-  }
-
-  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>) {
-    const arr = this.handlers.get(eventName) ?? [];
-    arr.push(handler);
-    this.handlers.set(eventName, arr);
-    return () => this.off(eventName, handler);
+  private getHandlers<K extends keyof EM>(eventName: K, version: number) {
+    return (this.handlers.get(eventName) ?? []).filter((h) => h.version === version).map((h) => h.handler);
   }
 
   private withGlobalTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {

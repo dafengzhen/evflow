@@ -17,6 +17,8 @@ It is designed for building reliable event-driven applications where event handl
 - Retry with backoff strategy
 - Task cancellation
 - Hook for task state change
+- Event persistence
+- Event versioning
 
 ## 📦 Installation
 
@@ -27,7 +29,7 @@ npm install evflow
 ## 🚀 Usage
 
 ```ts
-import { EventBus, EventTask } from "evflow";
+import { EventBus, EventState } from "evflow";
 
 type MyEvents = {
   userLogin: { username: string };
