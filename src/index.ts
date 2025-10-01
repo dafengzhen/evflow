@@ -3,6 +3,7 @@ import type {
   EventContext,
   EventHandler,
   EventMap,
+  EventMiddleware,
   EventStore,
   EventTaskOptions,
   PlainObject,
@@ -20,6 +21,9 @@ import { EventState } from './types.js';
  */
 export class EventBus<EM extends EventMap> {
   private handlers = new Map<keyof EM, Array<VersionedHandler<any, any>>>();
+
+  private middlewares = new Map<keyof EM, Array<EventMiddleware<any, any>>>();
+
   private readonly store?: EventStore;
 
   constructor(store?: EventStore) {
@@ -58,7 +62,7 @@ export class EventBus<EM extends EventMap> {
           state: r.state,
           timestamp: context.timestamp!,
           traceId: context.traceId!,
-          version: (context as any).version ?? 1,
+          version: context.version ?? 1,
         });
       }
     }
@@ -91,6 +95,16 @@ export class EventBus<EM extends EventMap> {
     return () => this.off(eventName, handler);
   }
 
+  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>) {
+    const arr = this.middlewares.get(eventName) ?? [];
+    arr.push(middleware);
+    this.middlewares.set(eventName, arr);
+    return () => {
+      const updated = (this.middlewares.get(eventName) ?? []).filter((m) => m !== middleware);
+      this.middlewares.set(eventName, updated);
+    };
+  }
+
   private async executeHandlers<K extends keyof EM, R>(
     handlers: EventHandler<EM[K], R>[],
     context: EventContext<EM[K]>,
@@ -99,7 +113,10 @@ export class EventBus<EM extends EventMap> {
   ) {
     const tasks = handlers.map((handler, idx) => ({
       idx,
-      task: new EventTask(handler, { ...taskOptions, id: `${context.name}_${idx}` }),
+      task: new EventTask((ctx) => this.runWithMiddlewares(ctx as EventContext<EM[K]>, handler), {
+        ...taskOptions,
+        id: `${context.name}_${idx}`,
+      }),
     }));
 
     const runTask = async ({ idx, task }: { idx: number; task: EventTask<EM[K], R> }) => {
@@ -134,6 +151,29 @@ export class EventBus<EM extends EventMap> {
     return (this.handlers.get(eventName) ?? []).filter((h) => h.version === version).map((h) => h.handler);
   }
 
+  private getMiddlewares<K extends keyof EM>(eventName: K) {
+    return this.middlewares.get(eventName) ?? [];
+  }
+
+  private async runWithMiddlewares<K extends keyof EM, R>(
+    context: EventContext<EM[K]>,
+    handler: EventHandler<EM[K], R>,
+  ): Promise<R> {
+    const middlewares = this.getMiddlewares(context.name as K);
+    let idx = -1;
+
+    const dispatch = async (): Promise<R> => {
+      idx++;
+      if (idx < middlewares.length) {
+        return middlewares[idx](context, dispatch);
+      } else {
+        return handler(context);
+      }
+    };
+
+    return dispatch();
+  }
+
   private withGlobalTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {
     if (!timeout || timeout <= 0) {
       return promise;
@@ -154,10 +194,15 @@ export class EventBus<EM extends EventMap> {
  */
 export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
   public readonly id: string;
+
   public readonly name?: string;
+
   public state: EventState = EventState.Idle;
+
   private cancelled = false;
+
   private readonly handler: EventHandler<Ctx, R>;
+
   private readonly opts: Required<EventTaskOptions>;
 
   constructor(handler: EventHandler<Ctx, R>, opts?: EventTaskOptions) {

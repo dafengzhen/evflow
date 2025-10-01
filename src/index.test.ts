@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
@@ -151,6 +151,114 @@ describe('EventBus - Versioning', () => {
     const r = await bus.emit('foo', { meta: { msg: 'no version' } });
     expect(hV1).toHaveBeenCalled();
     expect(r[0].result).toBe('default v1');
+  });
+});
+
+describe('EventBus - Middleware System', () => {
+  type TestEvent = { testEvent: { payload: any; userRole: string } };
+  let bus: EventBus<TestEvent>;
+  let logs: string[];
+
+  beforeEach(() => {
+    bus = new EventBus<TestEvent>();
+    logs = [];
+  });
+
+  it('Should execute middleware and event handlers in order', async () => {
+    const callOrder: string[] = [];
+
+    bus.use('testEvent', async (ctx, next) => {
+      callOrder.push('mw1-before');
+      const res = await next();
+      callOrder.push('mw1-after');
+      return res;
+    });
+
+    bus.use('testEvent', async (ctx, next) => {
+      callOrder.push('mw2-before');
+      const res = await next();
+      callOrder.push('mw2-after');
+      return res;
+    });
+
+    bus.on('testEvent', async () => {
+      callOrder.push('handler');
+      return 'ok';
+    });
+
+    const results = await bus.emit('testEvent', { meta: { payload: {}, userRole: 'admin' } });
+
+    expect(results[0].result).toBe('ok');
+    expect(callOrder).toEqual(['mw1-before', 'mw2-before', 'handler', 'mw2-after', 'mw1-after']);
+  });
+
+  it('Authorization middleware should block non-admin users', async () => {
+    bus.use('testEvent', async (ctx, next) => {
+      if (ctx.meta?.userRole !== 'admin') {
+        throw new Error('Permission denied');
+      }
+      return next();
+    });
+
+    bus.on('testEvent', async () => 'ok');
+
+    const results = await bus.emit('testEvent', { meta: { payload: {}, userRole: 'guest' } });
+
+    expect(results[0].error).toBeInstanceOf(Error);
+    expect(results[0].error.message).toBe('Permission denied');
+
+    const okResult = await bus.emit('testEvent', { meta: { payload: {}, userRole: 'admin' } });
+    expect(okResult[0].result).toBe('ok');
+  });
+
+  it('Data transformation middleware should modify payload', async () => {
+    bus.use('testEvent', async (ctx, next) => {
+      if (ctx.meta?.payload) {
+        ctx.meta.payload.transformed = true;
+      }
+      return next();
+    });
+
+    let capturedPayload: any;
+    bus.on('testEvent', async (ctx) => {
+      capturedPayload = ctx.meta?.payload;
+      return 'done';
+    });
+
+    await bus.emit('testEvent', { meta: { payload: { foo: 1 }, userRole: 'admin' } });
+    expect(capturedPayload).toEqual({ foo: 1, transformed: true });
+  });
+
+  it('Logging middleware should record event start and end', async () => {
+    const spyLog = vi.fn((msg) => logs.push(msg));
+
+    bus.use('testEvent', async (ctx, next) => {
+      spyLog(`[Start] ${ctx.name}`);
+      const res = await next();
+      spyLog(`[End] ${ctx.name}`);
+      return res;
+    });
+
+    bus.on('testEvent', async () => 'ok');
+    await bus.emit('testEvent', { meta: { payload: {}, userRole: 'admin' } });
+
+    expect(logs).toEqual(['[Start] testEvent', '[End] testEvent']);
+  });
+
+  it('Performance middleware should record execution time', async () => {
+    const spyPerf = vi.fn();
+    bus.use('testEvent', async (ctx, next) => {
+      const start = Date.now();
+      const res = await next();
+      spyPerf(Date.now() - start);
+      return res;
+    });
+
+    bus.on('testEvent', async () => new Promise((r) => setTimeout(() => r('ok'), 50)));
+    await bus.emit('testEvent', { meta: { payload: {}, userRole: 'admin' } });
+
+    expect(spyPerf).toHaveBeenCalled();
+    expect(spyPerf.mock.calls[0][0]).toBeGreaterThanOrEqual(50);
   });
 });
 

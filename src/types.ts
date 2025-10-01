@@ -31,6 +31,11 @@ export interface EventMap {
   [eventName: string]: PlainObject;
 }
 
+export type EventMiddleware<Ctx extends PlainObject = PlainObject, R = any> = (
+  context: EventContext<Ctx>,
+  next: () => Promise<R>,
+) => Promise<R>;
+
 export interface EventRecord {
   context: PlainObject;
   error?: any;

@@ -19,6 +19,7 @@ It is designed for building reliable event-driven applications where event handl
 - Hook for task state change
 - Event persistence
 - Event versioning
+- middleware System
 
 ## 📦 Installation
 
