@@ -43,23 +43,23 @@ const bus = new EventBus<MyEvents>();
 
 // 订阅事件
 bus.on("userLogin", async (ctx) => {
-  console.log("用户登录:", ctx.username);
+  console.log("用户登录:", ctx.meta.username);
 });
 
 // 触发事件
-bus.emit("userLogin", { username: "alice" });
+bus.emit("userLogin", { meta: { username: "alice" } });
 ```
 
 ```ts
 bus.on("dataFetch", async (ctx) => {
   // 模拟请求
   await new Promise((r) => setTimeout(r, 200));
-  return `来自 ${ctx.url} 的数据`;
+  return `来自 ${ctx.meta.url} 的数据`;
 });
 
 const results = await bus.emit(
   "dataFetch",
-  { url: "https://api.example.com" },
+  { meta: { url: "https://api.example.com" } },
   { retries: 3, retryDelay: 100, timeout: 1000 },
   { parallel: true, stopOnError: false, globalTimeout: 2000 }
 );

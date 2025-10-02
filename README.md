@@ -43,23 +43,23 @@ const bus = new EventBus<MyEvents>();
 
 // Subscribe
 bus.on("userLogin", async (ctx) => {
-  console.log("User logged in:", ctx.username);
+  console.log("User logged in:", ctx.meta.username);
 });
 
 // Emit
-bus.emit("userLogin", { username: "alice" });
+bus.emit("userLogin", { meta: { username: "alice" } });
 ```
 
 ```ts
 bus.on("dataFetch", async (ctx) => {
   // Simulate request
   await new Promise((r) => setTimeout(r, 200));
-  return `Fetched from ${ctx.url}`;
+  return `Fetched from ${ctx.meta.url}`;
 });
 
 const results = await bus.emit(
   "dataFetch",
-  { url: "https://api.example.com" },
+  { meta: { url: "https://api.example.com" } },
   { retries: 3, retryDelay: 100, timeout: 1000 },
   { parallel: true, stopOnError: false, globalTimeout: 2000 }
 );

@@ -19,28 +19,7 @@ import type {
 import { EventState } from './enums.ts';
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
-
-const DEFAULT_EMIT_OPTIONS: Required<EmitOptions> = {
-  globalTimeout: 0,
-  parallel: true,
-  stopOnError: false,
-};
-
-const now = () => Date.now();
-
-const genId = (prefix = 'id') => `${prefix}_${now()}_${Math.random().toString(36).slice(2, 9)}`;
-
-const safeStoreSave = async (store: EventStore | undefined, rec: EventRecord) => {
-  if (!store) {
-    return Promise.resolve();
-  }
-
-  try {
-    return store.save(rec);
-  } catch (err) {
-    console.warn('store.save failed (ignored):', err);
-  }
-};
+import { DEFAULT_EMIT_OPTIONS, genId, now, safeStoreSave, separateContextProperties } from './tools.ts';
 
 /**
  * EventBus.
@@ -84,10 +63,11 @@ export class EventBus<EM extends EventMap> {
     emitOptions: EmitOptions = {},
   ) {
     // 1. Execute locally first (don't block broadcasts)
-    const localPromise = this.emit(eventName, context, undefined, emitOptions);
+    const separatedContext = separateContextProperties(context);
+    const localPromise = this.emit(eventName, separatedContext, undefined, emitOptions);
 
     // 2. Prepare a canonical context/message
-    const baseCtx = this.normalizeContext(eventName, context);
+    const baseCtx = this.normalizeContext(eventName, separatedContext);
     const channels = broadcastOptions.channels ?? ['default'];
     const adapters = this.getAdaptersToUse(broadcastOptions.adapters);
     const broadcastId = genId('broadcast');
@@ -152,7 +132,8 @@ export class EventBus<EM extends EventMap> {
     emitOptions: EmitOptions = {},
   ): Promise<Array<{ error?: any; handlerIndex: number; result?: R; state: EventState; traceId: string }>> {
     const options = { ...DEFAULT_EMIT_OPTIONS, ...emitOptions };
-    const normalized = this.normalizeContext(eventName, context);
+    const separatedContext = separateContextProperties(context);
+    const normalized = this.normalizeContext(eventName, separatedContext);
     const migrated = this.migrateContext(eventName, normalized);
 
     const handlers = this.getHandlers(eventName, migrated.version!);

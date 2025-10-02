@@ -56,6 +56,8 @@ export interface EventContext<T extends PlainObject = PlainObject> {
   version?: number;
 }
 
+export type EventContextKeys = keyof EventContext;
+
 export type EventHandler<Ctx extends PlainObject = PlainObject, R = any> = (
   context: EventContext<Ctx>,
 ) => Promise<R> | R;

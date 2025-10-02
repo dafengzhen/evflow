@@ -223,8 +223,7 @@ describe('EventBus Broadcast', () => {
       eventBus2.on('test.event', handler);
 
       const originalContext = {
-        customField: 'custom-value',
-        data: { id: 123, user: 'test-user' },
+        meta: { customField: 'custom-value', data: { id: 123, user: 'test-user' } },
         timestamp: 1234567890,
         traceId: 'original-trace-id',
       };
@@ -237,8 +236,7 @@ describe('EventBus Broadcast', () => {
         expect.objectContaining({
           // Broadcast metadata should be merged, not overwritten
           broadcast: true,
-          customField: 'custom-value',
-          data: { id: 123, user: 'test-user' },
+          meta: { customField: 'custom-value', data: { id: 123, user: 'test-user' } },
         }),
       );
     });
