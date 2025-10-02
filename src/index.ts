@@ -19,7 +19,7 @@ import type {
 import { EventState } from './enums.ts';
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
-import { DEFAULT_EMIT_OPTIONS, genId, now, safeStoreSave, separateContextProperties } from './tools.ts';
+import { DEFAULT_EMIT_OPTIONS, genId, now, safeStoreSave } from './tools.ts';
 
 /**
  * EventBus.
@@ -63,11 +63,10 @@ export class EventBus<EM extends EventMap> {
     emitOptions: EmitOptions = {},
   ) {
     // 1. Execute locally first (don't block broadcasts)
-    const separatedContext = separateContextProperties(context);
-    const localPromise = this.emit(eventName, separatedContext, undefined, emitOptions);
+    const localPromise = this.emit(eventName, context, undefined, emitOptions);
 
     // 2. Prepare a canonical context/message
-    const baseCtx = this.normalizeContext(eventName, separatedContext);
+    const baseCtx = this.normalizeContext(eventName, context);
     const channels = broadcastOptions.channels ?? ['default'];
     const adapters = this.getAdaptersToUse(broadcastOptions.adapters);
     const broadcastId = genId('broadcast');
@@ -132,8 +131,7 @@ export class EventBus<EM extends EventMap> {
     emitOptions: EmitOptions = {},
   ): Promise<Array<{ error?: any; handlerIndex: number; result?: R; state: EventState; traceId: string }>> {
     const options = { ...DEFAULT_EMIT_OPTIONS, ...emitOptions };
-    const separatedContext = separateContextProperties(context);
-    const normalized = this.normalizeContext(eventName, separatedContext);
+    const normalized = this.normalizeContext(eventName, context);
     const migrated = this.migrateContext(eventName, normalized);
 
     const handlers = this.getHandlers(eventName, migrated.version!);
