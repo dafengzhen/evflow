@@ -1,7 +1,7 @@
-import type { EventMap } from '../src/types.js';
+import type { EventMap } from '../src/types.ts';
 
-import { InMemoryEventStore } from '../src/in-memory-event-store.js';
-import { EventBus } from '../src/index.js';
+import { InMemoryEventStore } from '../src/in-memory-event-store.ts';
+import { EventBus } from '../src/index.ts';
 
 interface MyEvents extends EventMap {
   orderPlaced: { amount: number; orderId: string };

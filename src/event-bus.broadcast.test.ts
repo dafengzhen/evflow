@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EventBus } from './index.js';
+import { EventState } from './enums.ts';
+import { EventBus } from './index.ts';
 import { MemoryBroadcastAdapter } from './memory-broadcast-adapter.ts';
-import { EventState } from './types.ts';
 
 /**
  * EventBus Broadcast.

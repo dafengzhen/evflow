@@ -1,4 +1,4 @@
-import type { BroadcastAdapter, BroadcastMessage } from './types.js';
+import type { BroadcastAdapter, BroadcastMessage } from './types.ts';
 
 /**
  * MemoryBroadcastAdapter.
@@ -14,64 +14,66 @@ export class MemoryBroadcastAdapter implements BroadcastAdapter {
     }>
   > = new Map();
 
-  public name: string;
+  public readonly name: string;
 
   constructor(name: string) {
     this.name = name;
   }
 
-  static getDebugInfo() {
-    const info: any = {};
-    for (const [channel, subscribers] of MemoryBroadcastAdapter.sharedChannels.entries()) {
+  static getDebugInfo(): Record<string, string[]> {
+    const info: Record<string, string[]> = {};
+    for (const [channel, subscribers] of this.sharedChannels) {
       info[channel] = subscribers.map((sub) => sub.adapter.name);
     }
     return info;
   }
 
+  private static cleanupChannel(channel: string, keep: (sub: { adapter: MemoryBroadcastAdapter }) => boolean): void {
+    const subscribers = this.sharedChannels.get(channel);
+    if (!subscribers) {
+      return;
+    }
+
+    const filtered = subscribers.filter(keep);
+    if (filtered.length > 0) {
+      this.sharedChannels.set(channel, filtered);
+    } else {
+      this.sharedChannels.delete(channel);
+    }
+  }
+
   async disconnect(): Promise<void> {
-    for (const [channel, subscribers] of MemoryBroadcastAdapter.sharedChannels.entries()) {
-      const filtered = subscribers.filter((sub) => sub.adapter !== this);
-      if (filtered.length > 0) {
-        MemoryBroadcastAdapter.sharedChannels.set(channel, filtered);
-      } else {
-        MemoryBroadcastAdapter.sharedChannels.delete(channel);
-      }
+    for (const channel of MemoryBroadcastAdapter.sharedChannels.keys()) {
+      MemoryBroadcastAdapter.cleanupChannel(channel, (sub) => sub.adapter !== this);
     }
   }
 
   async publish(channel: string, message: BroadcastMessage): Promise<void> {
-    const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel) || [];
+    const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel);
+    if (!subscribers) {
+      return;
+    }
 
-    for (const { adapter, callback } of subscribers) {
-      if (message.context.excludeSelf && adapter === this) {
+    for (const sub of subscribers) {
+      if (message.context.excludeSelf && sub.adapter === this) {
         continue;
       }
 
       try {
-        callback(message);
+        sub.callback(message);
       } catch (error) {
-        console.error(`❌ [${this.name}] Delivery error to ${adapter.name}:`, error);
+        console.error(`[${this.name}] Delivery error to ${sub.adapter.name}:`, error);
       }
     }
   }
 
   async subscribe(channel: string, callback: (message: BroadcastMessage) => void): Promise<void> {
-    if (!MemoryBroadcastAdapter.sharedChannels.has(channel)) {
-      MemoryBroadcastAdapter.sharedChannels.set(channel, []);
-    }
-
-    const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel)!;
+    const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel) ?? [];
     subscribers.push({ adapter: this, callback });
+    MemoryBroadcastAdapter.sharedChannels.set(channel, subscribers);
   }
 
   async unsubscribe(channel: string): Promise<void> {
-    const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel) || [];
-    const filtered = subscribers.filter((sub) => sub.adapter !== this);
-
-    if (filtered.length > 0) {
-      MemoryBroadcastAdapter.sharedChannels.set(channel, filtered);
-    } else {
-      MemoryBroadcastAdapter.sharedChannels.delete(channel);
-    }
+    MemoryBroadcastAdapter.cleanupChannel(channel, (sub) => sub.adapter !== this);
   }
 }

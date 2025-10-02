@@ -1,6 +1,6 @@
-import type { EventMap } from '../src/types.js';
+import type { EventMap } from '../src/types.ts';
 
-import { EventBus } from '../src/index.js';
+import { EventBus } from '../src/index.ts';
 
 interface MyEvents extends EventMap {
   'user.created': { userId: string };

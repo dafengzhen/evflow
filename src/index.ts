@@ -14,11 +14,33 @@ import type {
   EventTaskOptions,
   PlainObject,
   VersionedHandler,
-} from './types.js';
+} from './types.ts';
 
-import { EventCancelledError } from './event-cancelled-error.js';
-import { EventTimeoutError } from './event-timeout-error.js';
-import { EventState } from './types.js';
+import { EventState } from './enums.ts';
+import { EventCancelledError } from './event-cancelled-error.ts';
+import { EventTimeoutError } from './event-timeout-error.ts';
+
+const DEFAULT_EMIT_OPTIONS: Required<EmitOptions> = {
+  globalTimeout: 0,
+  parallel: true,
+  stopOnError: false,
+};
+
+const now = () => Date.now();
+
+const genId = (prefix = 'id') => `${prefix}_${now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+const safeStoreSave = async (store: EventStore | undefined, rec: EventRecord) => {
+  if (!store) {
+    return Promise.resolve();
+  }
+
+  try {
+    return store.save(rec);
+  } catch (err) {
+    console.warn('store.save failed (ignored):', err);
+  }
+};
 
 /**
  * EventBus.
@@ -26,7 +48,7 @@ import { EventState } from './types.js';
  * @author dafengzhen
  */
 export class EventBus<EM extends EventMap> {
-  private broadcastAdapters: Map<string, BroadcastAdapter> = new Map();
+  private broadcastAdapters = new Map<string, BroadcastAdapter>();
 
   private broadcastFilters: BroadcastFilter[] = [];
 
@@ -40,11 +62,11 @@ export class EventBus<EM extends EventMap> {
 
   private readonly store?: EventStore;
 
-  private subscribedChannels: Set<string> = new Set();
+  private subscribedChannels = new Set<string>();
 
   constructor(store?: EventStore) {
     this.store = store;
-    this.nodeId = `node_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
+    this.nodeId = `node_${Math.random().toString(36).slice(2, 9)}_${now()}`;
   }
 
   addBroadcastAdapter(adapter: BroadcastAdapter): void {
@@ -60,142 +82,118 @@ export class EventBus<EM extends EventMap> {
     context: EventContext<EM[K]> = {},
     broadcastOptions: BroadcastOptions = {},
     emitOptions: EmitOptions = {},
-  ): Promise<Array<{ error?: any; handlerIndex: number; result?: any; state: EventState; traceId: string }>> {
-    // 1. Execute locally first
-    const localResults = await this.emit(eventName, context, undefined, emitOptions);
+  ) {
+    // 1. Execute locally first (don't block broadcasts)
+    const localPromise = this.emit(eventName, context, undefined, emitOptions);
 
-    // 2. Prepare broadcast message
-    const broadcastId = `broadcast_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const broadcastMessage: BroadcastMessage = {
+    // 2. Prepare a canonical context/message
+    const baseCtx = this.normalizeContext(eventName, context);
+    const channels = broadcastOptions.channels ?? ['default'];
+    const adapters = this.getAdaptersToUse(broadcastOptions.adapters);
+    const broadcastId = genId('broadcast');
+    const message: BroadcastMessage = {
       broadcastId,
       context: {
-        ...context,
+        ...baseCtx,
         broadcast: true,
-        broadcastChannels: broadcastOptions.channels || ['default'],
+        broadcastChannels: channels,
         broadcastId,
         broadcastSource: this.nodeId,
         excludeSelf: broadcastOptions.excludeSelf ?? true,
-        name: context.name ?? String(eventName),
-        timestamp: context.timestamp ?? Date.now(),
-        traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
-        version: context.version ?? 1,
+        name: baseCtx.name!,
       },
       eventName: String(eventName),
       id: broadcastId,
       source: this.nodeId,
-      timestamp: Date.now(),
-      traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
-      version: context.version ?? 1,
+      timestamp: now(),
+      traceId: baseCtx.traceId!,
+      version: baseCtx.version!,
     };
 
-    // 3. Send to all specified adapters
-    const channels = broadcastOptions.channels || ['default'];
-    const adaptersToUse = this.getAdaptersToUse(broadcastOptions.adapters);
-
-    if (adaptersToUse.length > 0) {
-      const broadcastPromises: Promise<void>[] = [];
-
-      for (const adapter of adaptersToUse) {
-        for (const channel of channels) {
-          broadcastPromises.push(
-            adapter.publish(channel, broadcastMessage).catch((error) => {
-              console.error(`Broadcast failed on adapter ${adapter.name}, channel ${channel}:`, error);
-              // Store broadcast failure if store is available
-              if (this.store) {
-                this.store
-                  .save({
-                    context: broadcastMessage.context,
-                    error: error.message,
-                    id: `broadcast_fail_${broadcastId}`,
-                    name: `broadcast.${String(eventName)}`,
-                    result: null,
-                    state: EventState.Failed,
-                    timestamp: Date.now(),
-                    traceId: broadcastMessage.traceId,
-                    version: broadcastMessage.version,
-                  })
-                  .catch(() => {
-                    /* Ignore store errors */
-                  });
-              }
+    // 3. Publish (fire-and-forget but record failures)
+    if (adapters.length > 0) {
+      const tasks: Promise<unknown>[] = [];
+      for (const adapter of adapters) {
+        for (const ch of channels) {
+          tasks.push(
+            adapter.publish(ch, message).catch(async (error) => {
+              console.error(`Broadcast publish failed (${adapter.name}|${ch}):`, error);
+              await safeStoreSave(this.store, {
+                context: message.context,
+                error: (error && (error as Error).message) ?? String(error),
+                id: `broadcast_fail_${broadcastId}_${adapter.name}_${ch}`,
+                name: `broadcast.${String(eventName)}`,
+                result: null,
+                state: EventState.Failed,
+                timestamp: now(),
+                traceId: message.traceId,
+                version: message.version,
+              });
             }),
           );
         }
       }
-
-      // Don't block on broadcast completion
-      if (broadcastPromises.length > 0) {
-        Promise.all(broadcastPromises).catch(console.error);
-      }
+      // schedule logging of results but don't block core flow
+      Promise.allSettled(tasks).then((res) => {
+        const failed = res.filter((r) => r.status === 'rejected');
+        if (failed.length) {
+          console.warn(`${failed.length} broadcast publishes failed`);
+        }
+      });
     }
 
-    return localResults;
+    return localPromise;
   }
 
   async emit<K extends keyof EM, R = any>(
     eventName: K,
     context: EventContext<EM[K]> = {},
     taskOptions?: EventTaskOptions,
-    emitOptions: EmitOptions = { globalTimeout: 0, parallel: true, stopOnError: false },
+    emitOptions: EmitOptions = {},
   ): Promise<Array<{ error?: any; handlerIndex: number; result?: R; state: EventState; traceId: string }>> {
-    context = {
-      ...context,
-      name: context.name ?? String(eventName),
-      timestamp: context.timestamp ?? Date.now(),
-      traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
-      version: context.version ?? 1,
-    };
+    const options = { ...DEFAULT_EMIT_OPTIONS, ...emitOptions };
+    const normalized = this.normalizeContext(eventName, context);
+    const migrated = this.migrateContext(eventName, normalized);
 
-    const migratedContext = this.migrateContext(eventName, context);
-
-    const handlers = this.getHandlers(eventName, migratedContext.version!);
-
-    const results = await this.withGlobalTimeout(
-      this.executeHandlers(handlers, migratedContext, taskOptions, emitOptions),
-      <number>emitOptions.globalTimeout,
+    const handlers = this.getHandlers(eventName, migrated.version!);
+    const rawResults = await this.withGlobalTimeout(
+      this.executeHandlers(handlers, migrated, taskOptions, options),
+      options.globalTimeout,
     );
 
+    // persist results (sequentially safe)
     if (this.store) {
-      for (const r of results) {
-        await this.store.save({
-          context: migratedContext,
-          error: r.error,
-          id: `${migratedContext.name}_${r.handlerIndex}`,
-          name: migratedContext.name!,
-          result: r.result,
-          state: r.state,
-          timestamp: migratedContext.timestamp!,
-          traceId: migratedContext.traceId!,
-          version: migratedContext.version ?? 1,
-        });
-      }
+      await Promise.all(
+        rawResults.map((r) =>
+          safeStoreSave(this.store, {
+            context: migrated as PlainObject,
+            error: r.error,
+            id: `${migrated.name}_${r.handlerIndex}`,
+            name: migrated.name!,
+            result: r.result,
+            state: r.state,
+            timestamp: migrated.timestamp!,
+            traceId: migrated.traceId!,
+            version: migrated.version ?? 1,
+          }),
+        ),
+      );
     }
 
-    return results;
+    return rawResults;
   }
 
-  async getDLQStats(traceId?: string): Promise<{
-    byEvent: Record<string, number>;
-    newest: Date | null;
-    oldest: Date | null;
-    total: number;
-  }> {
+  async getDLQStats(traceId?: string) {
     const dlqRecords = await this.listDLQ(traceId);
-
     const byEvent: Record<string, number> = {};
     let oldest: null | number = null;
     let newest: null | number = null;
 
-    dlqRecords.forEach((record) => {
-      byEvent[record.name] = (byEvent[record.name] || 0) + 1;
-
-      if (!oldest || record.timestamp < oldest) {
-        oldest = record.timestamp;
-      }
-      if (!newest || record.timestamp > newest) {
-        newest = record.timestamp;
-      }
-    });
+    for (const r of dlqRecords) {
+      byEvent[r.name] = (byEvent[r.name] || 0) + 1;
+      oldest = oldest === null ? r.timestamp : Math.min(oldest, r.timestamp);
+      newest = newest === null ? r.timestamp : Math.max(newest, r.timestamp);
+    }
 
     return {
       byEvent,
@@ -215,14 +213,9 @@ export class EventBus<EM extends EventMap> {
     }
 
     try {
-      let records: EventRecord[];
-
-      if (traceId) {
-        records = await this.store.load(traceId);
-      } else {
-        records = await this.store.loadByTimeRange(Date.now() - 24 * 60 * 60 * 1000, Date.now());
-      }
-
+      const records: EventRecord[] = traceId
+        ? await this.store.load(traceId)
+        : await this.store.loadByTimeRange(now() - 24 * 60 * 60 * 1000, now());
       return records.filter((r) => r.state === EventState.DeadLetter).sort((a, b) => b.timestamp - a.timestamp);
     } catch (err) {
       console.error('Failed to load DLQ records:', err);
@@ -235,12 +228,13 @@ export class EventBus<EM extends EventMap> {
       this.handlers.delete(eventName);
       return;
     }
+
     const arr = this.handlers.get(eventName);
     if (!arr) {
       return;
     }
 
-    const filtered = arr.filter((h) => h.handler !== handler || (version && h.version !== version));
+    const filtered = arr.filter((h) => h.handler !== handler || (version !== undefined && h.version !== version));
     if (filtered.length) {
       this.handlers.set(eventName, filtered);
     } else {
@@ -248,11 +242,11 @@ export class EventBus<EM extends EventMap> {
     }
   }
 
-  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>, version: number = 1) {
+  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>, version = 1) {
     const arr = this.handlers.get(eventName) ?? [];
     arr.push({ handler, version });
     this.handlers.set(eventName, arr);
-    return () => this.off(eventName, handler);
+    return () => this.off(eventName, handler, version);
   }
 
   async purgeDLQ(traceId: string, dlqId: string, reason?: string): Promise<boolean> {
@@ -262,25 +256,19 @@ export class EventBus<EM extends EventMap> {
 
     const records = await this.store.load(traceId);
     const dlq = records.find((r) => r.id === dlqId && r.state === EventState.DeadLetter);
-
     if (!dlq) {
       return false;
     }
 
     await this.store.delete(traceId, dlqId);
-
-    await this.store.save({
-      context: {
-        originalDlqId: dlqId,
-        purgedAt: Date.now(),
-        purgedReason: reason || 'manual_purge',
-      },
+    await safeStoreSave(this.store, {
+      context: { originalDlqId: dlqId, purgedAt: now(), purgedReason: reason ?? 'manual_purge' },
       error: null,
-      id: `purge_${dlqId}_${Date.now()}`,
-      name: `dlq.purge`,
+      id: genId('purge'),
+      name: 'dlq.purge',
       result: null,
       state: EventState.Cancelled,
-      timestamp: Date.now(),
+      timestamp: now(),
       traceId,
       version: 1,
     });
@@ -288,50 +276,50 @@ export class EventBus<EM extends EventMap> {
     return true;
   }
 
-  async purgeMultipleDLQ(
-    traceId: string,
-    dlqIds: string[],
-  ): Promise<Array<{ error?: string; id: string; success: boolean }>> {
-    const results = [];
-    for (const dlqId of dlqIds) {
+  async purgeMultipleDLQ(traceId: string, dlqIds: string[]) {
+    const ret: Array<{ error?: string; id: string; success: boolean }> = [];
+
+    for (const id of dlqIds) {
       try {
-        const success = await this.purgeDLQ(traceId, dlqId);
-        results.push({ id: dlqId, success });
+        const ok = await this.purgeDLQ(traceId, id);
+        ret.push({ id, success: ok });
       } catch (err) {
-        results.push({ error: err instanceof Error ? err.message : String(err), id: dlqId, success: false });
+        ret.push({ error: err instanceof Error ? err.message : String(err), id, success: false });
       }
     }
-    return results;
+
+    return ret;
   }
 
   registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>) {
     if (!this.migrators.has(eventName)) {
       this.migrators.set(eventName, new Map());
     }
+
     this.migrators.get(eventName)!.set(fromVersion, migrator);
   }
 
   removeBroadcastAdapter(name: string): void {
     const adapter = this.broadcastAdapters.get(name);
-    if (adapter) {
-      // Unsubscribe from all channels
-      for (const channel of this.subscribedChannels) {
-        adapter.unsubscribe(channel).catch((error) => {
-          console.warn(`Failed to unsubscribe from channel ${channel} on adapter ${name}:`, error);
-        });
-      }
-      // Disconnect if supported
-      if (adapter.disconnect) {
-        adapter.disconnect().catch(console.error);
-      }
-      this.broadcastAdapters.delete(name);
+    if (!adapter) {
+      return;
     }
+
+    for (const channel of this.subscribedChannels) {
+      adapter.unsubscribe(channel).catch((err) => console.warn(`unsubscribe ${channel} failed:`, err));
+    }
+
+    if (adapter.disconnect) {
+      adapter.disconnect().catch(console.warn);
+    }
+
+    this.broadcastAdapters.delete(name);
   }
 
   removeBroadcastFilter(filter: BroadcastFilter): void {
-    const index = this.broadcastFilters.indexOf(filter);
-    if (index > -1) {
-      this.broadcastFilters.splice(index, 1);
+    const i = this.broadcastFilters.indexOf(filter);
+    if (i >= 0) {
+      this.broadcastFilters.splice(i, 1);
     }
   }
 
@@ -346,11 +334,10 @@ export class EventBus<EM extends EventMap> {
       throw new Error(`DLQ record ${dlqId} not found`);
     }
 
-    const requeueCount = (dlq.context.requeueCount as number) || 0;
-    const maxRequeue = (dlq.context.maxRequeue as number) || 5;
-
+    const requeueCount = Number(dlq.context.requeueCount ?? 0);
+    const maxRequeue = Number(dlq.context.maxRequeue ?? 5);
     if (requeueCount >= maxRequeue) {
-      throw new Error(`DLQ record ${dlqId} has exceeded maximum requeue count (${maxRequeue})`);
+      throw new Error(`DLQ ${dlqId} exceeded max requeue (${maxRequeue})`);
     }
 
     const ctx: EventContext<any> = {
@@ -358,50 +345,44 @@ export class EventBus<EM extends EventMap> {
       disableAutoDLQ: true,
       parentId: dlq.id,
       requeueCount: requeueCount + 1,
-      timestamp: Date.now(),
+      timestamp: undefined,
       traceId: dlq.traceId,
     };
 
-    const requeueTaskOptions: EventTaskOptions = {
-      retries: 0,
-      ...taskOptions,
-    };
+    const requeueTaskOptions: EventTaskOptions = { retries: 0, ...(taskOptions ?? {}) };
 
     try {
-      const results = await this.emit(dlq.name, ctx, requeueTaskOptions, emitOptions);
+      const results = await this.emit(dlq.name as keyof EM, ctx, requeueTaskOptions, emitOptions ?? {});
       const hasError = results.some((r) => r.error);
-
       if (hasError) {
-        const newDlqRecord: EventRecord = {
+        await safeStoreSave(this.store, {
           context: ctx,
           error: results.find((r) => r.error)?.error,
-          id: `requeue_${requeueCount + 1}_${dlqId}_${Date.now()}`,
+          id: genId('requeue'),
           name: dlq.name,
           result: null,
           state: EventState.DeadLetter,
-          timestamp: Date.now(),
+          timestamp: now(),
           traceId: dlq.traceId,
           version: dlq.version,
-        };
-        await this.store.save(newDlqRecord);
+        });
       }
 
       await this.store.delete?.(traceId, dlqId);
       return results;
     } catch (err) {
       if (requeueCount < maxRequeue) {
-        const newDlqRecord: EventRecord = {
+        await safeStoreSave(this.store, {
           context: ctx as PlainObject,
           error: err instanceof Error ? err.message : String(err),
-          id: `requeue_${requeueCount + 1}_${dlqId}_${Date.now()}`,
+          id: genId('requeue_err'),
           name: dlq.name,
           result: null,
           state: EventState.DeadLetter,
-          timestamp: Date.now(),
+          timestamp: now(),
           traceId: dlq.traceId,
           version: dlq.version,
-        };
-        await this.store.save(newDlqRecord);
+        });
       }
 
       await this.store.delete?.(traceId, dlqId);
@@ -409,49 +390,50 @@ export class EventBus<EM extends EventMap> {
     }
   }
 
-  async requeueMultipleDLQ(
-    traceId: string,
-    dlqIds: string[],
-  ): Promise<Array<{ error?: string; id: string; success: boolean }>> {
-    const results = [];
-    for (const dlqId of dlqIds) {
+  async requeueMultipleDLQ(traceId: string, dlqIds: string[]) {
+    const res: Array<{ error?: string; id: string; success: boolean }> = [];
+
+    for (const id of dlqIds) {
       try {
-        await this.requeueDLQ(traceId, dlqId);
-        results.push({ id: dlqId, success: true });
+        await this.requeueDLQ(traceId, id);
+        res.push({ id, success: true });
       } catch (err) {
-        results.push({ error: err instanceof Error ? err.message : String(err), id: dlqId, success: false });
+        res.push({ error: err instanceof Error ? err.message : String(err), id, success: false });
       }
     }
-    return results;
+
+    return res;
   }
 
-  async subscribeBroadcast(channels: string | string[], options: { adapter?: string } = {}): Promise<void> {
-    const channelList = Array.isArray(channels) ? channels : [channels];
+  async subscribeBroadcast(channels: string | string[], options: { adapter?: string } = {}) {
+    const list = Array.isArray(channels) ? channels : [channels];
     const adapters = this.getAdaptersToUse(options.adapter ? [options.adapter] : undefined);
 
     for (const adapter of adapters) {
-      for (const channel of channelList) {
-        if (this.subscribedChannels.has(channel)) {
+      for (const ch of list) {
+        if (this.subscribedChannels.has(ch)) {
           continue;
         }
 
-        await adapter.subscribe(channel, async (message: BroadcastMessage) => {
-          await this.handleIncomingBroadcast(message);
-        });
+        await adapter
+          .subscribe(ch, (message: BroadcastMessage) => this.handleIncomingBroadcast(message))
+          .catch((err) => {
+            console.warn(`subscribe ${ch} on ${adapter.name} failed:`, err);
+          });
 
-        this.subscribedChannels.add(channel);
+        this.subscribedChannels.add(ch);
       }
     }
   }
 
-  async unsubscribeBroadcast(channels: string | string[], adapterName?: string): Promise<void> {
-    const channelList = Array.isArray(channels) ? channels : [channels];
+  async unsubscribeBroadcast(channels: string | string[], adapterName?: string) {
+    const list = Array.isArray(channels) ? channels : [channels];
     const adapters = this.getAdaptersToUse(adapterName ? [adapterName] : undefined);
 
     for (const adapter of adapters) {
-      for (const channel of channelList) {
-        await adapter.unsubscribe(channel);
-        this.subscribedChannels.delete(channel);
+      for (const ch of list) {
+        await adapter.unsubscribe(ch).catch((err) => console.warn(`unsubscribe ${ch} failed:`, err));
+        this.subscribedChannels.delete(ch);
       }
     }
   }
@@ -470,75 +452,76 @@ export class EventBus<EM extends EventMap> {
     handlers: EventHandler<EM[K], R>[],
     context: EventContext<EM[K]>,
     taskOptions?: EventTaskOptions,
-    emitOptions?: EmitOptions,
+    emitOptions?: Required<EmitOptions>,
   ) {
+    // create tasks
     const tasks = handlers.map((handler, idx) => ({
       idx,
-      task: new EventTask((ctx) => this.runWithMiddlewares(ctx as EventContext<EM[K]>, handler), {
+      task: new EventTask<PlainObject, R>((ctx) => this.runWithMiddlewares(ctx as EventContext<any>, handler), {
         ...taskOptions,
         id: `${context.name}_${idx}`,
       }),
     }));
 
-    const runTask = async ({ idx, task }: { idx: number; task: EventTask<EM[K], R> }) => {
+    const runTask = async ({ idx, task }: { idx: number; task: EventTask<any, R> }) => {
       try {
         const result = await task.run({ ...context, parentId: context.id });
-        return { handlerIndex: idx, result, state: task.state, traceId: context.traceId! };
+        return { handlerIndex: idx, result, state: task.state, traceId: context.traceId! } as const;
       } catch (err) {
+        // DLQ logic: only move to DLQ if non-retryable/exhausted and auto DLQ not disabled
         try {
-          const exhausted = task.attempts >= (task.opts?.retries ?? 1);
+          const exhausted = task.attempts >= Math.max(1, Math.floor(task.opts.retries));
           const isRetryable = task.opts?.isRetryable ? task.opts.isRetryable(err) : true;
           const disableAutoDLQ = context.disableAutoDLQ === true;
-
-          if ((!isRetryable || exhausted) && !disableAutoDLQ) {
-            if (this.store) {
-              const rec: EventRecord = {
-                context: context as PlainObject,
-                error: err instanceof Error ? err.message : String(err),
-                id: `${context.name}_${idx}_${Date.now()}`,
-                name: String(context.name),
-                result: null,
-                state: EventState.DeadLetter,
-                timestamp: Date.now(),
-                traceId: context.traceId!,
-                version: context.version,
-              };
-              await this.moveToDLQ(rec);
-            }
+          if ((!isRetryable || exhausted) && !disableAutoDLQ && this.store) {
+            const rec: EventRecord = {
+              context: context as PlainObject,
+              error: err instanceof Error ? err.message : String(err),
+              id: `${context.name}_${idx}_${now()}`,
+              name: String(context.name),
+              result: null,
+              state: EventState.DeadLetter,
+              timestamp: now(),
+              traceId: context.traceId!,
+              version: context.version,
+            };
+            await this.moveToDLQ(rec);
           }
         } catch (dlqErr) {
           console.error('DLQ handling failed:', dlqErr);
         }
-
-        return { error: err, handlerIndex: idx, state: task.state, traceId: context.traceId! };
+        return { error: err, handlerIndex: idx, state: task.state, traceId: context.traceId! } as const;
       }
     };
 
-    const exec = async () => {
-      if (emitOptions?.parallel) {
-        return Promise.all(tasks.map(runTask));
-      }
+    // parallel or sequential execution
+    if (emitOptions?.parallel) {
+      // run all in parallel and return results preserving order via mapping
+      const settled = await Promise.allSettled(tasks.map((t) => runTask(t)));
+      return settled.map((s) =>
+        s.status === 'fulfilled'
+          ? s.value
+          : { error: s.reason, handlerIndex: -1, state: EventState.Failed, traceId: context.traceId! },
+      );
+    }
 
-      const results: any[] = [];
-      for (const t of tasks) {
-        const r = await runTask(t);
-        results.push(r);
-        if (r.error && emitOptions?.stopOnError) {
-          break;
-        }
+    const results: any[] = [];
+    for (const t of tasks) {
+      const r = await runTask(t);
+      results.push(r);
+      if (r.error && emitOptions?.stopOnError) {
+        break;
       }
-      return results;
-    };
+    }
 
-    return exec();
+    return results;
   }
 
-  private getAdaptersToUse(adapterNames?: string[]): BroadcastAdapter[] {
+  private getAdaptersToUse(adapterNames?: string[]) {
     if (adapterNames && adapterNames.length > 0) {
-      return adapterNames
-        .map((name) => this.broadcastAdapters.get(name))
-        .filter((adapter): adapter is BroadcastAdapter => adapter !== undefined);
+      return adapterNames.map((n) => this.broadcastAdapters.get(n)).filter((a): a is BroadcastAdapter => !!a);
     }
+
     return Array.from(this.broadcastAdapters.values());
   }
 
@@ -551,97 +534,88 @@ export class EventBus<EM extends EventMap> {
     if (!arr.length) {
       return null;
     }
-    return arr.reduce((prev, cur) => (cur.version > prev.version ? cur : prev));
+
+    return arr.reduce((p, c) => (c.version > p.version ? c : p));
   }
 
   private getMiddlewares<K extends keyof EM>(eventName: K) {
     return this.middlewares.get(eventName) ?? [];
   }
 
-  private async handleIncomingBroadcast(message: BroadcastMessage): Promise<void> {
+  private async handleIncomingBroadcast(message: BroadcastMessage) {
     try {
-      // Avoid processing our own messages if excludeSelf is true
       const excludeSelf = message.context.excludeSelf ?? true;
       if (excludeSelf && message.source === this.nodeId) {
         return;
       }
 
-      // Apply filters
       for (const filter of this.broadcastFilters) {
         try {
-          const shouldProcess = await filter(message);
-          if (!shouldProcess) {
-            return; // Filter rejected the message
+          const ok = await filter(message);
+          if (!ok) {
+            return;
           }
-        } catch (error) {
-          console.error('Error in broadcast filter:', error);
-          // Continue processing if filter fails
+        } catch (err) {
+          console.error('broadcast filter error:', err);
         }
       }
 
-      // Execute the event with broadcast context
-      await this.emit(message.eventName, {
+      // forward to local emit (preserve context and mark receivedAt)
+      await this.emit(message.eventName as keyof EM, {
         ...message.context,
         broadcast: true,
         broadcastId: message.broadcastId,
         broadcastSource: message.source,
         meta: message.context.meta as EM[keyof EM],
-        receivedAt: Date.now(),
+        receivedAt: now(),
       });
-    } catch (error) {
-      console.error(`Failed to handle broadcast message ${message.id}:`, error);
-
-      // Store broadcast handling failure if store is available
-      if (this.store) {
-        this.store
-          .save({
-            context: message.context,
-            error: error instanceof Error ? error.message : String(error),
-            id: `broadcast_handle_fail_${message.id}`,
-            name: `broadcast.handle.${message.eventName}`,
-            result: null,
-            state: EventState.Failed,
-            timestamp: Date.now(),
-            traceId: message.traceId,
-            version: message.version,
-          })
-          .catch(() => {
-            /* Ignore store errors */
-          });
-      }
+    } catch (err) {
+      console.error('Failed to handle broadcast message:', err);
+      await safeStoreSave(this.store, {
+        context: message.context,
+        error: err instanceof Error ? err.message : String(err),
+        id: genId('broadcast_handle_fail'),
+        name: `broadcast.handle.${message.eventName}`,
+        result: null,
+        state: EventState.Failed,
+        timestamp: now(),
+        traceId: message.traceId,
+        version: message.version,
+      });
     }
   }
 
-  private migrateContext<K extends keyof EM>(eventName: K, context: EventContext<EM[K]>): EventContext<EM[K]> {
+  private migrateContext<K extends keyof EM>(eventName: K, context: EventContext<EM[K]>) {
     let ctx = { ...context };
     const latest = this.getLatestHandler(eventName);
     if (!latest) {
       return ctx;
     }
 
-    while (ctx.version! < latest.version) {
-      const migrator = this.migrators.get(eventName)?.get(ctx.version!);
+    while ((ctx.version ?? 1) < latest.version) {
+      const migrator = this.migrators.get(eventName)?.get(ctx.version ?? 1);
       if (!migrator) {
         break;
       }
+
       ctx = migrator(ctx);
-      ctx.version = ctx.version! + 1;
+      ctx.version = (ctx.version ?? 1) + 1;
     }
 
     return ctx;
   }
 
-  private async moveToDLQ(record: EventRecord): Promise<void> {
+  private async moveToDLQ(record: EventRecord) {
     if (!this.store) {
       return;
     }
 
     const dlqRecord: EventRecord = {
       ...record,
-      id: `dlq_${record.id}_${Date.now()}`,
+      id: `dlq_${record.id}_${now()}`,
       name: record.name,
       state: EventState.DeadLetter,
-      timestamp: Date.now(),
+      timestamp: now(),
       traceId: record.traceId,
     };
 
@@ -652,20 +626,29 @@ export class EventBus<EM extends EventMap> {
     }
   }
 
+  private normalizeContext<K extends keyof EM>(eventName: K, context: EventContext<EM[K]>) {
+    return {
+      ...context,
+      name: context.name ?? String(eventName),
+      timestamp: context.timestamp ?? now(),
+      traceId: context.traceId ?? genId('trace'),
+      version: context.version ?? 1,
+    };
+  }
+
   private async runWithMiddlewares<K extends keyof EM, R>(
     context: EventContext<EM[K]>,
     handler: EventHandler<EM[K], R>,
   ): Promise<R> {
     const middlewares = this.getMiddlewares(context.name as K);
     let idx = -1;
-
     const dispatch = async (): Promise<R> => {
       idx++;
       if (idx < middlewares.length) {
         return middlewares[idx](context, dispatch);
-      } else {
-        return handler(context);
       }
+
+      return handler(context);
     };
 
     return dispatch();
@@ -675,6 +658,7 @@ export class EventBus<EM extends EventMap> {
     if (!timeout || timeout <= 0) {
       return promise;
     }
+
     return Promise.race([
       promise,
       new Promise<T>((_, rej) =>
@@ -707,7 +691,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
   private readonly handler: EventHandler<Ctx, R>;
 
   constructor(handler: EventHandler<Ctx, R>, opts?: EventTaskOptions) {
-    this.id = opts?.id ?? `evt_${Math.random().toString(36).slice(2, 9)}`;
+    this.id = opts?.id ?? genId('evt');
     this.name = opts?.name;
     this.handler = handler;
     this.opts = {
@@ -715,10 +699,10 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
       isRetryable: opts?.isRetryable ?? (() => true),
       name: this.name ?? this.id,
       onStateChange: opts?.onStateChange ?? (() => {}),
-      retries: opts?.retries ?? 1,
-      retryBackoff: opts?.retryBackoff ?? 1,
-      retryDelay: opts?.retryDelay ?? 200,
-      timeout: opts?.timeout ?? 0,
+      retries: Number(opts?.retries ?? 1),
+      retryBackoff: Number(opts?.retryBackoff ?? 1),
+      retryDelay: Number(opts?.retryDelay ?? 200),
+      timeout: Number(opts?.timeout ?? 0),
     };
   }
 
@@ -726,6 +710,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     if (this.cancelled) {
       return;
     }
+
     this.cancelled = true;
     this._setState(EventState.Cancelled);
   }
@@ -739,8 +724,8 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
       ...context,
       id: context.id ?? this.id,
       name: context.name ?? this.name,
-      timestamp: Date.now(),
-      traceId: context.traceId ?? `trace_${Math.random().toString(36).slice(2, 11)}`,
+      timestamp: context.timestamp ?? now(),
+      traceId: context.traceId ?? genId('trace'),
     };
 
     this._setState(EventState.Running, { context });
@@ -757,15 +742,18 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
           // noinspection ExceptionCaughtLocallyJS
           throw new EventCancelledError();
         }
+
         this._setState(EventState.Succeeded, { attempt: this.attempts, result });
         return result;
       } catch (err) {
         lastErr = err;
         this.lastError = err;
         this._setState(EventState.Failed, { attempt: this.attempts, error: err });
+
         if (!this.opts.isRetryable(err) || this.attempts >= maxAttempts || this.cancelled) {
           break;
         }
+
         const delay = Math.round(this.opts.retryDelay * Math.pow(this.opts.retryBackoff, this.attempts - 1));
         await new Promise((r) => setTimeout(r, delay));
       }
@@ -788,6 +776,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     }
 
     const run = () => Promise.resolve().then(() => this.handler(context));
+
     if (!this.opts.timeout) {
       return run();
     }
@@ -805,10 +794,11 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
 
   private _setState(state: EventState, info?: any) {
     this.state = state;
+
     try {
       this.opts.onStateChange(state, info);
     } catch {
-      /* empty */
+      // swallow onStateChange errors
     }
   }
 }

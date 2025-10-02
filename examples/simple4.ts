@@ -1,4 +1,4 @@
-import { EventBus } from '../src/index.js';
+import { EventBus } from '../src/index.ts';
 
 type MyEvents = {
   userCreated: UserCreatedEvent;

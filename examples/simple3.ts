@@ -1,6 +1,6 @@
-import type { EventMiddleware } from '../src/types.js';
+import type { EventMiddleware } from '../src/types.ts';
 
-import { EventBus } from '../src/index.js';
+import { EventBus } from '../src/index.ts';
 
 const authMiddleware: EventMiddleware<{ userRole: string }> = async (ctx, next) => {
   if (ctx.meta?.userRole !== 'admin') {

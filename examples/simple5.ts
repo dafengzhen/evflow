@@ -1,5 +1,5 @@
-import { EventBus } from '../src/index.js';
-import { MemoryBroadcastAdapter } from '../src/memory-broadcast-adapter.js';
+import { EventBus } from '../src/index.ts';
+import { MemoryBroadcastAdapter } from '../src/memory-broadcast-adapter.ts';
 
 async function correctTestExpectations() {
   console.log('=== CORRECT Test Expectations ===\n');

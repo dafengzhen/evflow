@@ -1,3 +1,8 @@
+/**
+ * EventCancelledError.
+ *
+ * @author dafengzhen
+ */
 export class EventCancelledError extends Error {
   constructor(message = 'Event cancelled') {
     super(message);

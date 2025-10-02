@@ -1,12 +1,4 @@
-export enum EventState {
-  Cancelled = 'cancelled',
-  DeadLetter = 'deadletter',
-  Failed = 'failed',
-  Idle = 'idle',
-  Running = 'running',
-  Succeeded = 'succeeded',
-  Timeout = 'timeout',
-}
+import type { EventState } from './enums.ts';
 
 export interface BroadcastAdapter<EM extends EventMap = EventMap> {
   disconnect?(): Promise<void>;

@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EventContext } from './types.ts';
 
+import { EventState } from './enums.ts';
 import { EventCancelledError } from './event-cancelled-error.ts';
 import { EventTimeoutError } from './event-timeout-error.ts';
-import { InMemoryEventStore } from './in-memory-event-store.js';
-import { EventBus, EventTask } from './index.js';
-import { EventState } from './types.ts';
+import { InMemoryEventStore } from './in-memory-event-store.ts';
+import { EventBus, EventTask } from './index.ts';
 
 type Events = {
   bar: { x: number };

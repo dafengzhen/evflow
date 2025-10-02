@@ -1,4 +1,4 @@
-import type { EventRecord, EventStore } from './types.js';
+import type { EventRecord, EventStore } from './types.ts';
 
 /**
  * InMemoryEventStore.
@@ -6,59 +6,44 @@ import type { EventRecord, EventStore } from './types.js';
  * @author dafengzhen
  */
 export class InMemoryEventStore implements EventStore {
-  private store: Map<string, Map<string, EventRecord>> = new Map();
+  private store = new Map<string, Map<string, EventRecord>>();
 
   async clear(): Promise<void> {
     this.store.clear();
   }
 
   async delete(traceId: string, id: string): Promise<void> {
-    const m = this.store.get(traceId);
-    if (!m) {
-      return;
-    }
-    m.delete(id);
+    this.store.get(traceId)?.delete(id);
   }
 
   async load(traceId: string): Promise<EventRecord[]> {
-    const m = this.store.get(traceId);
-    if (!m) {
-      return [];
-    }
-    return Array.from(m.values());
+    return Array.from(this.store.get(traceId)?.values() ?? []);
   }
 
   async loadByName(name: string): Promise<EventRecord[]> {
-    const result: EventRecord[] = [];
-    for (const m of this.store.values()) {
-      for (const r of m.values()) {
-        if (r.name === name) {
-          result.push(r);
-        }
-      }
-    }
-    return result;
+    return this.filterRecords((r) => r.name === name);
   }
 
   async loadByTimeRange(start: number, end: number): Promise<EventRecord[]> {
-    const result: EventRecord[] = [];
-    for (const m of this.store.values()) {
-      for (const r of m.values()) {
-        if (r.timestamp >= start && r.timestamp <= end) {
-          result.push(r);
-        }
-      }
-    }
-    return result;
+    return this.filterRecords((r) => r.timestamp >= start && r.timestamp <= end);
   }
 
   async save(record: EventRecord): Promise<void> {
     const traceId = record.traceId ?? 'unknown';
-    let m = this.store.get(traceId);
-    if (!m) {
-      m = new Map();
-      this.store.set(traceId, m);
-    }
+    const m = this.store.get(traceId) ?? new Map<string, EventRecord>();
     m.set(record.id, record);
+    this.store.set(traceId, m);
+  }
+
+  private filterRecords(predicate: (record: EventRecord) => boolean): EventRecord[] {
+    const result: EventRecord[] = [];
+    for (const m of this.store.values()) {
+      for (const r of m.values()) {
+        if (predicate(r)) {
+          result.push(r);
+        }
+      }
+    }
+    return result;
   }
 }
