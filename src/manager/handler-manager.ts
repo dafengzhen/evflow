@@ -25,7 +25,7 @@ export class HandlerManager<EM extends EventMap> {
 
   private middlewareUsage = new Map<string, UsageInfo>();
 
-  private migrators = new Map<keyof EM, Map<number, EventMigrator<any>>>();
+  private migrators = new Map<keyof EM, Map<number, EventMigrator<any, any>>>();
 
   private migratorUsage = new Map<string, UsageInfo>();
 
@@ -68,11 +68,11 @@ export class HandlerManager<EM extends EventMap> {
     this.migratorUsage.clear();
   }
 
-  getHandlers<K extends keyof EM>(eventName: K, version: number): EventHandler<EM[K], any>[] {
+  getHandlers<K extends keyof EM>(eventName: K, version: number): EventHandler<EM, K, any>[] {
     return (this.handlers.get(eventName) ?? []).filter((h) => h.version === version).map((h) => h.handler);
   }
 
-  getLatestHandler<K extends keyof EM>(eventName: K): null | VersionedHandler<EM[K], any> {
+  getLatestHandler<K extends keyof EM>(eventName: K): null | VersionedHandler<EM, K, any> {
     const arr = this.handlers.get(eventName);
     if (!arr?.length) {
       return null;
@@ -80,7 +80,7 @@ export class HandlerManager<EM extends EventMap> {
     return arr.reduce((max, cur) => (cur.version > max.version ? cur : max));
   }
 
-  getMiddlewares<K extends keyof EM>(eventName: K): EventMiddleware<EM[K], any>[] {
+  getMiddlewares<K extends keyof EM>(eventName: K): EventMiddleware<EM, K, any>[] {
     return this.middlewares.get(eventName) ?? [];
   }
 
@@ -136,7 +136,7 @@ export class HandlerManager<EM extends EventMap> {
     return ctx;
   }
 
-  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>, version?: number): boolean {
+  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM, K, any>, version?: number): boolean {
     if (!this.handlers.has(eventName)) {
       return false;
     }
@@ -154,11 +154,7 @@ export class HandlerManager<EM extends EventMap> {
         return true;
       }
 
-      if (version !== undefined && h.version !== version) {
-        return true;
-      }
-
-      return false;
+      return version !== undefined && h.version !== version;
     });
 
     if (filtered.length === originalLen) {
@@ -174,7 +170,7 @@ export class HandlerManager<EM extends EventMap> {
     return true;
   }
 
-  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>, version = 1): () => void {
+  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM, K, any>, version = 1): () => void {
     this.ensureValidEventName(eventName);
 
     const handlers = this.handlers.get(eventName) ?? [];
@@ -189,7 +185,7 @@ export class HandlerManager<EM extends EventMap> {
     return () => this.off(eventName, handler, version);
   }
 
-  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>): () => void {
+  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM, K>): () => void {
     this.ensureValidEventName(eventName);
 
     let versionMap = this.migrators.get(eventName);
@@ -227,7 +223,7 @@ export class HandlerManager<EM extends EventMap> {
     this.updateUsage(this.migratorUsage, String(eventName));
   }
 
-  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>): () => void {
+  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM, K, any>): () => void {
     this.ensureValidEventName(eventName);
 
     const arr = this.middlewares.get(eventName) ?? [];

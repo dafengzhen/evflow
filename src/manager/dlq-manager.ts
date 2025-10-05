@@ -1,4 +1,4 @@
-import type { ErrorType, EventContext, EventRecord, PlainObject } from '../types.ts';
+import type { ErrorType, EventContext, EventMap, EventRecord, PlainObject } from '../types.ts';
 import type { StoreManager } from './store-manager.ts';
 
 import { EventState } from '../enums.ts';
@@ -9,10 +9,14 @@ import { now } from '../utils.ts';
  *
  * @author dafengzhen
  */
-export class DLQManager {
+export class DLQManager<EM extends EventMap> {
   constructor(
-    private readonly storeManager: StoreManager,
-    private readonly handleError?: (error: Error, context: PlainObject, type: ErrorType) => Promise<void>,
+    private readonly storeManager: StoreManager<EM>,
+    private readonly handleError?: <K extends keyof EM>(
+      error: Error,
+      context: EventContext<EM[K]>,
+      type: ErrorType,
+    ) => Promise<void>,
   ) {}
 
   destroy(): void {}
@@ -98,7 +102,7 @@ export class DLQManager {
         purgedAt: now(),
         purgedReason: reason,
         traceId,
-      },
+      } as PlainObject,
       'dlq_purge',
     );
 
@@ -223,7 +227,7 @@ export class DLQManager {
     };
   }
 
-  private async reportError(err: unknown, context: PlainObject, type: ErrorType = 'store') {
+  private async reportError<K extends keyof EM>(err: unknown, context: EventContext<EM[K]>, type: ErrorType = 'store') {
     if (!this.handleError) {
       return;
     }

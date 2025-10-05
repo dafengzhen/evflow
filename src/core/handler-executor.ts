@@ -17,19 +17,19 @@ import { EventTask } from './event-task.ts';
 export class HandlerExecutor<EM extends EventMap> {
   constructor(
     private readonly handlerManager: HandlerManager<EM>,
-    private readonly dlqManager: DLQManager,
-    private readonly errorHandler: ErrorHandler,
+    private readonly dlqManager: DLQManager<EM>,
+    private readonly errorHandler: ErrorHandler<EM>,
   ) {}
 
   async executeHandlers<K extends keyof EM, R>(
-    handlers: EventHandler<EM[K], R>[],
+    handlers: EventHandler<EM, K, R>[],
     context: EventContext<EM[K]>,
     taskOptions?: EventTaskOptions,
     emitOptions?: Required<EmitOptions>,
   ): Promise<HandlerResult<R>[]> {
     const tasks = handlers.map((h, i) => ({
       index: i,
-      task: new EventTask<PlainObject, R>((ctx) => this.runWithMiddlewares(ctx as EventContext<any>, h), {
+      task: new EventTask<EM, K, R>((ctx) => this.runWithMiddlewares(ctx as EventContext<any>, h), {
         ...taskOptions,
         id: `${context.name}_${i}_${genId('task')}`,
       }),
@@ -63,7 +63,12 @@ export class HandlerExecutor<EM extends EventMap> {
     return results;
   }
 
-  private async handleDLQOnError(err: unknown, task: EventTask<any, any>, context: EventContext<any>, idx: number) {
+  private async handleDLQOnError<K extends keyof EM>(
+    err: unknown,
+    task: EventTask<any, any>,
+    context: EventContext<EM[K]>,
+    idx: number,
+  ) {
     try {
       const retries = typeof task.opts?.retries === 'number' ? task.opts.retries : 0;
       const exhausted = task.attempts > retries;
@@ -117,7 +122,7 @@ export class HandlerExecutor<EM extends EventMap> {
 
   private async runWithMiddlewares<K extends keyof EM, R>(
     context: EventContext<EM[K]>,
-    handler: EventHandler<EM[K], R>,
+    handler: EventHandler<EM, K, R>,
   ): Promise<R> {
     const middlewares = this.handlerManager.getMiddlewares(context.name as K) ?? [];
     let index = -1;

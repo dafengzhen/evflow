@@ -2,14 +2,14 @@ import type { EventMiddleware } from '../src/types.ts';
 
 import { EventBus } from '../src/index.ts';
 
-const authMiddleware: EventMiddleware<{ userRole: string }> = async (ctx, next) => {
+const authMiddleware: EventMiddleware<{ testEvent: { userRole: string } }> = async (ctx, next) => {
   if (ctx.meta?.userRole !== 'admin') {
     throw new Error('Permission denied');
   }
   return next();
 };
 
-const transformMiddleware: EventMiddleware<{ payload: any }> = async (ctx, next) => {
+const transformMiddleware: EventMiddleware<{ testEvent: { payload: any } }> = async (ctx, next) => {
   if (ctx.meta?.payload) {
     ctx.meta.payload = { ...ctx.meta.payload, transformed: true };
   }

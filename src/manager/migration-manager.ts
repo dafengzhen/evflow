@@ -6,7 +6,7 @@ import type { EventContext, EventMap, EventMigrator } from '../types.ts';
  * @author dafengzhen
  */
 export class MigrationManager<EM extends EventMap> {
-  private migrators = new Map<keyof EM, Map<number, EventMigrator<any>>>();
+  private migrators = new Map<keyof EM, Map<number, EventMigrator<any, any>>>();
 
   private usage = new Map<string, { lastUsed: number; usageCount: number }>();
 
@@ -60,7 +60,7 @@ export class MigrationManager<EM extends EventMap> {
     return ctx;
   }
 
-  register<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>): void {
+  register<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM, K>): void {
     let migratorMap = this.migrators.get(eventName);
     if (!migratorMap) {
       migratorMap = new Map();

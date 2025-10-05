@@ -49,7 +49,7 @@ export class InMemoryEventStore implements EventStore {
     this.store.set(traceId, m);
   }
 
-  async saveErrorRecord(error: Error, context: PlainObject, type: string): Promise<void> {
+  async saveErrorRecord(error: Error, context: PlainObject & { traceId?: string }, type: string): Promise<void> {
     const record: EventRecord = {
       context,
       error,

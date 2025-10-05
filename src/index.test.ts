@@ -711,7 +711,6 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
         clear: () => Promise.resolve(),
         delete: () => Promise.resolve(),
         load: () => Promise.reject(new Error('Database error')),
-        loadByName: () => Promise.resolve([]),
         loadByTimeRange: () => Promise.reject(new Error('Database error')),
         save: () => Promise.resolve(),
       };
@@ -849,7 +848,7 @@ describe('EventTask', () => {
       return 'x';
     });
     await expect(task.run()).rejects.toBeInstanceOf(EventCancelledError);
-    expect(task.state).toBe(EventState.Failed);
+    expect(task.state).toBe(EventState.Cancelled);
   });
 
   it('onStateChange callback invoked', async () => {

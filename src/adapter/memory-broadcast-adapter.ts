@@ -1,4 +1,4 @@
-import type { BroadcastAdapter, BroadcastMessage } from '../types.ts';
+import type { BroadcastAdapter, BroadcastAdapterStatus, BroadcastMessage } from '../types.ts';
 
 /**
  * MemoryBroadcastAdapter.
@@ -48,6 +48,10 @@ export class MemoryBroadcastAdapter implements BroadcastAdapter {
     }
   }
 
+  healthCheck(): Promise<BroadcastAdapterStatus> {
+    throw new Error('Method not implemented.');
+  }
+
   async publish(channel: string, message: BroadcastMessage): Promise<void> {
     const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel);
     if (!subscribers) {
@@ -67,7 +71,7 @@ export class MemoryBroadcastAdapter implements BroadcastAdapter {
     }
   }
 
-  async subscribe(channel: string, callback: (message: BroadcastMessage) => void): Promise<void> {
+  async subscribe(channel: string, callback: (message: BroadcastMessage<any, any>) => void): Promise<void> {
     const subscribers = MemoryBroadcastAdapter.sharedChannels.get(channel) ?? [];
     subscribers.push({ adapter: this, callback });
     MemoryBroadcastAdapter.sharedChannels.set(channel, subscribers);

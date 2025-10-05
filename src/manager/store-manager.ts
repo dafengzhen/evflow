@@ -1,4 +1,4 @@
-import type { ErrorType, EventContext, EventRecord, EventStore, PlainObject } from '../types.ts';
+import type { ErrorType, EventContext, EventMap, EventRecord, EventStore, PlainObject } from '../types.ts';
 
 import { EventState } from '../enums.ts';
 import { genId, now, safeStoreSave } from '../utils.ts';
@@ -8,10 +8,14 @@ import { genId, now, safeStoreSave } from '../utils.ts';
  *
  * @author dafengzhen
  */
-export class StoreManager {
+export class StoreManager<EM extends EventMap> {
   constructor(
     private store?: EventStore,
-    private handleError?: (error: Error, context: PlainObject, type: ErrorType) => Promise<void>,
+    private handleError?: <K extends keyof EM>(
+      error: Error,
+      context: EventContext<EM[K]>,
+      type: ErrorType,
+    ) => Promise<void>,
   ) {}
 
   async checkStoreHealth(): Promise<{ error?: string; status: 'healthy' | 'not_configured' | 'unhealthy' }> {
@@ -66,12 +70,12 @@ export class StoreManager {
 
     try {
       if (typeof this.store.loadAll === 'function') {
-        return this.store.loadAll();
+        return await this.store.loadAll();
       }
 
       const end = now();
       const start = end - 30 * 24 * 60 * 60 * 1000;
-      return this.store.loadByTimeRange ? this.store.loadByTimeRange(start, end) : [];
+      return this.store.loadByTimeRange ? await this.store.loadByTimeRange(start, end) : [];
     } catch (err) {
       await this.handleStoreError(err, {}, 'loadAll');
       return [];
@@ -84,9 +88,9 @@ export class StoreManager {
     }
 
     try {
-      return this.store.loadByTimeRange(start, end);
+      return await this.store.loadByTimeRange(start, end);
     } catch (err) {
-      await this.handleStoreError(err, { end, start }, 'loadByTimeRange');
+      await this.handleStoreError(err, { end, start } as PlainObject, 'loadByTimeRange');
       return [];
     }
   }
@@ -97,14 +101,14 @@ export class StoreManager {
     }
 
     try {
-      return this.store.load(traceId);
+      return await this.store.load(traceId);
     } catch (err) {
       await this.handleStoreError(err, { traceId }, 'load');
       return [];
     }
   }
 
-  async saveErrorRecord(error: Error, context: PlainObject, type: string): Promise<void> {
+  async saveErrorRecord<K extends keyof EM>(error: Error, context: EventContext<EM[K]>, type: string): Promise<void> {
     if (!this.store) {
       return;
     }
@@ -157,10 +161,10 @@ export class StoreManager {
       return;
     }
 
-    await this.safeSave(record, record.context);
+    await this.safeSave(record, record.context as PlainObject);
   }
 
-  private async handleStoreError(err: unknown, context: PlainObject, type: string) {
+  private async handleStoreError<K extends keyof EM>(err: unknown, context: EventContext<EM[K]>, type: string) {
     if (this.handleError) {
       await this.handleError(err instanceof Error ? err : new Error(String(err)), context, 'store');
     } else {
@@ -168,7 +172,7 @@ export class StoreManager {
     }
   }
 
-  private async safeSave(record: EventRecord, context: PlainObject): Promise<void> {
+  private async safeSave<K extends keyof EM>(record: EventRecord, context: EventContext<EM[K]>): Promise<void> {
     try {
       await safeStoreSave(this.store!, record);
     } catch (err) {

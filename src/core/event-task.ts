@@ -1,4 +1,4 @@
-import type { EventContext, EventHandler, EventTaskOptions, PlainObject } from '../types.ts';
+import type { EventContext, EventHandler, EventMap, EventTaskOptions, PlainObject } from '../types.ts';
 
 import { EventState } from '../enums.ts';
 import { EventCancelledError, EventTimeoutError } from '../errors.ts';
@@ -9,7 +9,7 @@ import { genId, now } from '../utils.ts';
  *
  * @author dafengzhen
  */
-export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
+export class EventTask<EM extends EventMap, K extends keyof EM, R = any> {
   public attempts = 0;
 
   public readonly id: string;
@@ -24,13 +24,13 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
 
   private abortController?: AbortController;
 
-  private readonly handler: EventHandler<Ctx, R>;
+  private readonly handler: EventHandler<EM, K, R>;
 
   private isAborted = false;
 
   private isDestroyed = false;
 
-  constructor(handler: EventHandler<Ctx, R>, opts?: EventTaskOptions) {
+  constructor(handler: EventHandler<EM, K, R>, opts?: EventTaskOptions) {
     this.id = opts?.id ?? genId('evt');
     this.name = opts?.name;
     this.handler = handler;
@@ -54,15 +54,15 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
 
     this.isAborted = true;
     this.abortController?.abort();
-    this.setState(EventState.Cancelled);
+    this.setState(EventState.Cancelled, { timestamp: now() });
   }
 
   cleanup(): void {
-    this.isDestroyed = true;
     this.cancel();
+    this.isDestroyed = true;
   }
 
-  async run(context: EventContext<Ctx> = {}): Promise<R> {
+  async run(context: EventContext<EM[K]> = {}): Promise<R> {
     this.validateExecutionState();
 
     const executionContext = this.buildExecutionContext(context);
@@ -82,6 +82,12 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
       } catch (error) {
         lastError = error;
         this.lastError = error;
+
+        if (error instanceof EventCancelledError) {
+          this.setState(EventState.Cancelled, { attempt });
+          throw error;
+        }
+
         this.setState(EventState.Failed, { attempt, error });
 
         if (!this.shouldRetry(error) || attempt >= maxAttempts) {
@@ -97,7 +103,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     throw lastError;
   }
 
-  private buildExecutionContext(context: EventContext<Ctx>): EventContext<Ctx> {
+  private buildExecutionContext(context: EventContext<EM[K]>): EventContext<EM[K]> {
     return {
       ...context,
       id: context.id ?? this.id,
@@ -108,7 +114,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
   }
 
   private checkCancellation(): void {
-    if (this.isAborted || this.isDestroyed) {
+    if (this.isDestroyed || this.isAborted) {
       throw new EventCancelledError();
     }
   }
@@ -136,7 +142,7 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
     }
   }
 
-  private async executeWithTimeout(context: EventContext<Ctx>): Promise<R> {
+  private async executeWithTimeout(context: EventContext<EM[K]>): Promise<R> {
     this.checkCancellation();
 
     this.abortController = new AbortController();
@@ -183,10 +189,10 @@ export class EventTask<Ctx extends PlainObject = PlainObject, R = any> {
   }
 
   private validateExecutionState(): void {
+    this.checkCancellation();
+
     if (this.state === EventState.Running) {
       throw new Error('Task is already running');
     }
-
-    this.checkCancellation();
   }
 }

@@ -31,7 +31,7 @@ export class MiddlewareManager<EM extends EventMap> {
     }
   }
 
-  getMiddlewares<K extends keyof EM>(eventName: K): EventMiddleware<EM[K], any>[] {
+  getMiddlewares<K extends keyof EM>(eventName: K): EventMiddleware<EM, K, any>[] {
     return this.middlewares.get(eventName) ?? [];
   }
 
@@ -61,7 +61,7 @@ export class MiddlewareManager<EM extends EventMap> {
     }
   }
 
-  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>): () => void {
+  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM, K, any>): () => void {
     const arr = this.middlewares.get(eventName) ?? [];
     if (arr.length >= this.options.maxMiddlewarePerEvent) {
       throw new Error(

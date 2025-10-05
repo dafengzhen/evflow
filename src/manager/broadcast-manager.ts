@@ -30,7 +30,11 @@ export class BroadcastManager<EM extends EventMap> {
 
   constructor(
     private readonly nodeId: string,
-    private readonly handleError: (error: Error, context: PlainObject, type: ErrorType) => Promise<void>,
+    private readonly handleError: <K extends keyof EM>(
+      error: Error,
+      context: EventContext<EM[K]>,
+      type: ErrorType,
+    ) => Promise<void>,
     private readonly maxProcessedBroadcasts = 10_000,
   ) {}
 
@@ -53,7 +57,7 @@ export class BroadcastManager<EM extends EventMap> {
     const channels = broadcastOptions.channels ?? ['default'];
     const adapters = this.getAdaptersToUse(broadcastOptions.adapters);
 
-    const message: BroadcastMessage = {
+    const message = {
       broadcastId,
       context: {
         ...context,
@@ -162,7 +166,11 @@ export class BroadcastManager<EM extends EventMap> {
         receivedAt: now(),
       });
     } catch (error) {
-      await this.handleError(error instanceof Error ? error : new Error(String(error)), message.context, 'broadcast');
+      await this.handleError(
+        error instanceof Error ? error : new Error(String(error)),
+        message.context as PlainObject,
+        'broadcast',
+      );
     }
   }
 
@@ -261,7 +269,7 @@ export class BroadcastManager<EM extends EventMap> {
     } catch (error) {
       await this.handleError(
         error instanceof Error ? error : new Error(String(error)),
-        { ...context, adapter: adapterName, channel },
+        { ...context, adapter: adapterName, channel } as PlainObject,
         'adapter',
       );
     }

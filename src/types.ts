@@ -1,11 +1,11 @@
 import type { EventState } from './enums.ts';
 
 export interface BroadcastAdapter<EM extends EventMap = EventMap> {
-  disconnect?(): Promise<void>;
-  healthCheck?(): Promise<{ healthy: boolean; message?: string }>;
+  disconnect(): Promise<void>;
+  healthCheck(): Promise<BroadcastAdapterStatus>;
   name: string;
-  publish(channel: string, message: BroadcastMessage<EM>): Promise<void>;
-  subscribe(channel: string, callback: (message: BroadcastMessage<EM>) => void): Promise<void>;
+  publish<K extends keyof EM>(channel: string, message: BroadcastMessage<EM, K>): Promise<void>;
+  subscribe<K extends keyof EM>(channel: string, callback: (message: BroadcastMessage<EM, K>) => void): Promise<void>;
   unsubscribe(channel: string): Promise<void>;
 }
 
@@ -16,13 +16,13 @@ export interface BroadcastAdapterStatus {
 }
 
 export interface BroadcastFilter<EM extends EventMap = EventMap> {
-  (message: BroadcastMessage<EM>): boolean | Promise<boolean>;
+  <K extends keyof EM>(message: BroadcastMessage<EM, K>): boolean | Promise<boolean>;
 }
 
-export interface BroadcastMessage<EM extends EventMap = EventMap> {
+export interface BroadcastMessage<EM extends EventMap = EventMap, K extends keyof EM = keyof EM> {
   broadcastId: string;
-  context: EventContext<EM[keyof EM]>;
-  eventName: keyof EM;
+  context: EventContext<EM[K]>;
+  eventName: K;
   id: string;
   source: string;
   timestamp: number;
@@ -60,7 +60,11 @@ export interface EmitResult<R = any> {
   traceId: string;
 }
 
-export type ErrorHandler = (error: Error, context: PlainObject, type: ErrorType) => void;
+export type ErrorHandler<EM extends EventMap = EventMap, K extends keyof EM = keyof EM> = (
+  error: Error,
+  context: EventContext<EM[K]>,
+  type: ErrorType,
+) => void;
 
 export type ErrorType = 'adapter' | 'broadcast' | 'cleanup' | 'handler' | 'middleware' | 'migrator' | 'store';
 
@@ -95,23 +99,25 @@ export interface EventContext<T extends PlainObject = PlainObject> {
   version?: number;
 }
 
-export type EventHandler<Ctx extends PlainObject = PlainObject, R = unknown> = (
-  context: EventContext<Ctx>,
+export type EventHandler<EM extends EventMap = EventMap, K extends keyof EM = keyof EM, R = unknown> = (
+  context: EventContext<EM[K]>,
 ) => Promise<R> | R;
 
 export interface EventMap {
   [eventName: string]: PlainObject;
 }
 
-export type EventMiddleware<Ctx extends PlainObject = PlainObject, R = unknown> = (
-  context: EventContext<Ctx>,
+export type EventMiddleware<EM extends EventMap = EventMap, K extends keyof EM = keyof EM, R = unknown> = (
+  context: EventContext<EM[K]>,
   next: () => Promise<R>,
 ) => Promise<R>;
 
-export type EventMigrator<Ctx extends PlainObject = PlainObject> = (context: EventContext<Ctx>) => EventContext<Ctx>;
+export type EventMigrator<EM extends EventMap = EventMap, K extends keyof EM = keyof EM> = (
+  context: EventContext<EM[K]>,
+) => EventContext<EM[K]>;
 
-export interface EventRecord {
-  context: PlainObject;
+export interface EventRecord<EM extends EventMap = EventMap, K extends keyof EM = keyof EM> {
+  context: EventContext<EM[K]>;
   error?: Error;
   errorStack?: string;
   id: string;
@@ -132,7 +138,7 @@ export interface EventStore {
   loadByName(name: string): Promise<EventRecord[]>;
   loadByTimeRange(start: number, end: number): Promise<EventRecord[]>;
   save(record: EventRecord): Promise<void>;
-  saveErrorRecord?(error: Error, context: PlainObject, type: string): Promise<void>;
+  saveErrorRecord?(error: Error, context: PlainObject, type: ErrorType): Promise<void>;
   saveEventResults(context: EventContext, results: EmitResult[]): Promise<void>;
 }
 
@@ -147,13 +153,7 @@ export interface EventTaskOptions {
   timeout?: number;
 }
 
-export type HandlerResult<R> = {
-  error?: Error;
-  handlerIndex: number;
-  result?: R;
-  state: EventState;
-  traceId: string;
-};
+export type HandlerResult<R = any> = EmitResult<R>;
 
 export interface HandlerUsageStats {
   handlers: { byEvent: Record<string, number>; total: number };
@@ -170,7 +170,7 @@ export interface HealthCheckResult {
   status: 'degraded' | 'healthy' | 'unhealthy';
 }
 
-export type PlainObject = Record<string, any>;
+export type PlainObject = Record<string, unknown>;
 
 export interface StoreHealthStatus {
   details?: PlainObject;
@@ -183,7 +183,7 @@ export interface UsageInfo {
   usageCount: number;
 }
 
-export type VersionedHandler<Ctx extends PlainObject, R = unknown> = {
-  handler: EventHandler<Ctx, R>;
+export type VersionedHandler<EM extends EventMap, K extends keyof EM, R = unknown> = {
+  handler: EventHandler<EM, K, R>;
   version: number;
 };

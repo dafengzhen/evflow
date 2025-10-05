@@ -15,7 +15,6 @@ import type {
   EventTaskOptions,
   HandlerUsageStats,
   HealthCheckResult,
-  PlainObject,
 } from '../types.ts';
 
 import { EventTimeoutError } from '../errors.ts';
@@ -37,9 +36,9 @@ export class EventBus<EM extends EventMap> {
 
   private readonly contextNormalizer: ContextNormalizer<EM>;
 
-  private readonly dlqManager: DLQManager;
+  private readonly dlqManager: DLQManager<EM>;
 
-  private readonly errorHandler: ErrorHandler;
+  private readonly errorHandler: ErrorHandler<EM>;
 
   private readonly handlerExecutor: HandlerExecutor<EM>;
 
@@ -59,7 +58,7 @@ export class EventBus<EM extends EventMap> {
 
   private readonly options: Required<EventBusOptions>;
 
-  private readonly storeManager: StoreManager;
+  private readonly storeManager: StoreManager<EM>;
 
   constructor(store?: EventStore, options: EventBusOptions = {}) {
     this.nodeId = `node_${Math.random().toString(36).slice(2, 9)}_${now()}`;
@@ -217,12 +216,12 @@ export class EventBus<EM extends EventMap> {
     return this.dlqManager.listDLQ(traceId);
   }
 
-  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM[K], any>, version?: number): boolean {
+  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM, K, any>, version?: number): boolean {
     this.checkActive();
     return this.handlerManager.off(eventName, handler, version);
   }
 
-  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM[K], any>, version = 1): () => void {
+  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM, K, any>, version = 1): () => void {
     this.checkActive();
     return this.handlerManager.on(eventName, handler, version);
   }
@@ -244,7 +243,7 @@ export class EventBus<EM extends EventMap> {
     return results;
   }
 
-  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM[K]>): () => void {
+  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM, K>): () => void {
     this.checkActive();
     return this.handlerManager.registerMigrator(eventName, fromVersion, migrator);
   }
@@ -301,7 +300,7 @@ export class EventBus<EM extends EventMap> {
     return this.broadcastManager.unsubscribeBroadcast(channels, adapterName);
   }
 
-  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM[K], any>): () => void {
+  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM, K, any>): () => void {
     this.checkActive();
     return this.handlerManager.use(eventName, middleware);
   }
@@ -327,7 +326,11 @@ export class EventBus<EM extends EventMap> {
     }
   }
 
-  private async handleError(error: Error, context: PlainObject, type: ErrorType): Promise<void> {
+  private async handleError<K extends keyof EM>(
+    error: Error,
+    context: EventContext<EM[K]>,
+    type: ErrorType,
+  ): Promise<void> {
     await this.errorHandler.handle(error, context, type);
   }
 

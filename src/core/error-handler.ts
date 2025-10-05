@@ -1,18 +1,22 @@
 import type { StoreManager } from '../manager/index.ts';
-import type { ErrorType, PlainObject } from '../types.ts';
+import type { ErrorType, EventContext, EventMap } from '../types.ts';
 
 /**
  * ErrorHandler.
  *
  * @author dafengzhen
  */
-export class ErrorHandler {
+export class ErrorHandler<EM extends EventMap> {
   constructor(
-    private readonly userErrorHandler: (error: Error, context: PlainObject, type: ErrorType) => void,
-    private readonly storeManager: StoreManager,
+    private readonly userErrorHandler: <K extends keyof EM>(
+      error: Error,
+      context: EventContext<EM[K]>,
+      type: ErrorType,
+    ) => void,
+    private readonly storeManager: StoreManager<EM>,
   ) {}
 
-  async handle(error: Error, context: PlainObject, type: ErrorType): Promise<void> {
+  async handle<K extends keyof EM>(error: Error, context: EventContext<EM[K]>, type: ErrorType): Promise<void> {
     this.logError(`type: ${type}`, error);
 
     try {

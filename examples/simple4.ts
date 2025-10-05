@@ -1,15 +1,11 @@
 import { EventBus } from '../src/index.ts';
 
-type MyEvents = {
-  userCreated: UserCreatedEvent;
-};
-
-interface UserCreatedEvent {
-  age?: number;
-  name: string;
-}
-
-const bus = new EventBus<MyEvents>();
+const bus = new EventBus<{
+  userCreated: {
+    age?: number;
+    name: string;
+  };
+}>();
 
 bus.on(
   'userCreated',
