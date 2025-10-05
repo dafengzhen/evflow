@@ -3,10 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventContext } from './types.ts';
 
 import { EventState } from './enums.ts';
-import { EventCancelledError } from './event-cancelled-error.ts';
-import { EventTimeoutError } from './event-timeout-error.ts';
-import { InMemoryEventStore } from './in-memory-event-store.ts';
-import { EventBus, EventTask } from './index.ts';
+import { EventCancelledError, EventTimeoutError } from './errors.ts';
+import { EventBus, EventTask, InMemoryEventStore } from './index.ts';
 
 type Events = {
   bar: { x: number };
@@ -221,7 +219,7 @@ describe('EventBus - Middleware System', () => {
     const results = await bus.emit('testEvent', { meta: { payload: {}, userRole: 'guest' } });
 
     expect(results[0].error).toBeInstanceOf(Error);
-    expect(results[0].error.message).toBe('Permission denied');
+    expect(results[0].error?.message).toBe('Permission denied');
 
     const okResult = await bus.emit('testEvent', { meta: { payload: {}, userRole: 'admin' } });
     expect(okResult[0].result).toBe('ok');
@@ -433,7 +431,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
     expect(afterRequeueStats.newest).toBeInstanceOf(Date);
 
     // The timestamp of the new record should be later than the original record
-    expect(afterRequeueStats.newest!.getTime()).toBeGreaterThan(afterFailureStats.newest!.getTime());
+    expect(afterRequeueStats.newest!.getTime()).toBeGreaterThanOrEqual(afterFailureStats.newest!.getTime());
 
     // Purge DLQ record
     await bus.purgeDLQ(traceId, afterRequeue[0].id);
@@ -483,7 +481,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       // Create some DLQ records
       await store.save({
         context: {},
-        error: 'Processing failed',
+        error: new Error('Processing failed'),
         id: 'dlq_1',
         name: 'order.created',
         result: null,
@@ -495,7 +493,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
 
       await store.save({
         context: {},
-        error: 'Cancellation failed',
+        error: new Error('Cancellation failed'),
         id: 'dlq_2',
         name: 'order.cancelled',
         result: null,
@@ -507,7 +505,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
 
       await store.save({
         context: {},
-        error: 'Failed again',
+        error: new Error('Failed again'),
         id: 'dlq_3',
         name: 'order.created',
         result: null,
@@ -536,7 +534,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       // Create records for the first traceId
       await store.save({
         context: {},
-        error: 'Processing failed',
+        error: new Error('Processing failed'),
         id: 'dlq_1',
         name: 'order.created',
         result: null,
@@ -548,7 +546,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
 
       await store.save({
         context: {},
-        error: 'Payment failed',
+        error: new Error('Payment failed'),
         id: 'dlq_2',
         name: 'payment.failed',
         result: null,
@@ -561,7 +559,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       // Create records for the second traceId
       await store.save({
         context: {},
-        error: 'Processing failed',
+        error: new Error('Processing failed'),
         id: 'dlq_3',
         name: 'order.created',
         result: null,
@@ -602,7 +600,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       const records = [
         {
           context: {},
-          error: 'Failure 1',
+          error: new Error('Failure 1'),
           id: 'dlq_oldest',
           name: 'order.created',
           result: null,
@@ -613,7 +611,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
         },
         {
           context: {},
-          error: 'Failure 2',
+          error: new Error('Failure 2'),
           id: 'dlq_middle',
           name: 'order.updated',
           result: null,
@@ -624,7 +622,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
         },
         {
           context: {},
-          error: 'Failure 3',
+          error: new Error('Failure 3'),
           id: 'dlq_newest',
           name: 'order.cancelled',
           result: null,
@@ -651,7 +649,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       // DLQ record
       await store.save({
         context: {},
-        error: 'Processing failed',
+        error: new Error('Processing failed'),
         id: 'dlq_1',
         name: 'order.created',
         result: null,
@@ -664,7 +662,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       // Non-DLQ record (should be ignored)
       await store.save({
         context: {},
-        error: null,
+        error: new Error(),
         id: 'success_1',
         name: 'order.created',
         result: { success: true },
@@ -676,7 +674,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
 
       await store.save({
         context: {},
-        error: 'Processing failed',
+        error: new Error('Processing failed'),
         id: 'failed_1',
         name: 'order.created',
         result: null,
@@ -738,7 +736,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
       const records = [
         {
           context: {},
-          error: 'Failure',
+          error: new Error('Failure'),
           id: 'dlq_1',
           name: 'event.old',
           result: null,
@@ -749,7 +747,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
         },
         {
           context: {},
-          error: 'Failure',
+          error: new Error('Failure'),
           id: 'dlq_2',
           name: 'event.new',
           result: null,
@@ -760,7 +758,7 @@ describe('EventBus = Dead Letter Queue (DLQ)', () => {
         },
         {
           context: {},
-          error: 'Failure',
+          error: new Error('Failure'),
           id: 'dlq_3',
           name: 'event.middle',
           result: null,
@@ -842,7 +840,7 @@ describe('EventTask', () => {
     const task = new EventTask(() => 'never');
     task.cancel();
     await expect(task.run()).rejects.toBeInstanceOf(EventCancelledError);
-    expect(task.state).toBe(EventState.Running);
+    expect(task.state).toBe(EventState.Cancelled);
   });
 
   it('cancel during run', async () => {

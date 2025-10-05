@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EventState } from './enums.ts';
-import { EventBus } from './index.ts';
-import { MemoryBroadcastAdapter } from './memory-broadcast-adapter.ts';
+import { EventState } from '../enums.ts';
+import { EventBus, MemoryBroadcastAdapter } from '../index.ts';
 
 /**
  * EventBus Broadcast.
@@ -340,14 +339,20 @@ describe('EventBus Broadcast', () => {
   });
 
   describe('Adapter Management', () => {
-    it('should allow adding and removing adapters', () => {
+    it('should allow adding and removing adapters', async () => {
       const newAdapter = new MemoryBroadcastAdapter('new-adapter');
 
       eventBus1.addBroadcastAdapter(newAdapter);
-      expect(eventBus1['broadcastAdapters'].has('new-adapter')).toBe(true);
+
+      const health = await eventBus1.healthCheck();
+      const adapterNames = health.details.adapters.map((a: any) => a.name);
+      expect(adapterNames).toContain('new-adapter');
 
       eventBus1.removeBroadcastAdapter('new-adapter');
-      expect(eventBus1['broadcastAdapters'].has('new-adapter')).toBe(false);
+
+      const healthAfterRemove = await eventBus1.healthCheck();
+      const adapterNamesAfterRemove = healthAfterRemove.details.adapters.map((a: any) => a.name);
+      expect(adapterNamesAfterRemove).not.toContain('new-adapter');
     });
 
     it('should use specified adapters for broadcasting', async () => {

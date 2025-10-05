@@ -1,4 +1,4 @@
-import type { BroadcastAdapter, BroadcastMessage } from './types.ts';
+import type { BroadcastAdapter, BroadcastMessage } from '../types.ts';
 
 /**
  * MemoryBroadcastAdapter.

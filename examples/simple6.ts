@@ -1,5 +1,4 @@
-import { InMemoryEventStore } from '../src/in-memory-event-store.ts';
-import { EventBus } from '../src/index.ts';
+import { EventBus, InMemoryEventStore } from '../src/index.ts';
 
 const store = new InMemoryEventStore();
 const bus = new EventBus<any>(store);

@@ -5,6 +5,7 @@ import type { EmitOptions, EventRecord, EventStore } from './types.ts';
  */
 export const DEFAULT_EMIT_OPTIONS: Required<EmitOptions> = {
   globalTimeout: 0,
+  maxConcurrency: 1,
   parallel: true,
   stopOnError: false,
 };
