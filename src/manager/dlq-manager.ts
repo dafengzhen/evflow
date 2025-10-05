@@ -218,10 +218,15 @@ export class DLQManager<EM extends EventMap> {
   private createDLQRecord(base: EventRecord, error?: Error | string): EventRecord {
     const errMsg = error instanceof Error ? error : new Error(error);
     const timestamp = now();
+
+    const idParts = base.id.split('_');
+    const lastPart = idParts[idParts.length - 1];
+    const id = lastPart === String(timestamp) ? `dlq_${base.id}` : `dlq_${base.id}_${timestamp}`;
+
     return {
       ...base,
       error: errMsg ?? base.error ?? new Error(),
-      id: `dlq_${base.id}_${timestamp}`,
+      id,
       state: EventState.DeadLetter,
       timestamp,
     };
