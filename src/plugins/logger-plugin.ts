@@ -6,6 +6,8 @@ import type { EventBus, EventBusPlugin, EventMap, PlainObject } from '../types/t
  * @author dafengzhen
  */
 export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implements EventBusPlugin<EM, GC> {
+  private cleanupFunctions: (() => void)[] = [];
+
   private logger: Console;
 
   constructor(logger: Console = console) {
@@ -13,7 +15,9 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
   }
 
   async install(bus: EventBus<EM, GC>): Promise<void> {
-    bus.useGlobalMiddleware(async (context, next) => {
+    this.cleanup();
+
+    const removeGlobalMiddleware = bus.useGlobalMiddleware(async (context, next) => {
       const eventName = context.meta?.eventName ?? 'unknown';
       const startTime = Date.now();
 
@@ -46,7 +50,9 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
       }
     });
 
-    bus.match('*', (context) => {
+    this.cleanupFunctions.push(removeGlobalMiddleware);
+
+    const removeMatchHandler = bus.match('*', (context) => {
       const eventName = context.meta?.eventName ?? 'unknown';
       this.logger.debug(`[EventBus] Event emitted: ${eventName}`, {
         data: context.data,
@@ -55,9 +61,19 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
         timestamp: new Date().toISOString(),
       });
     });
+
+    this.cleanupFunctions.push(removeMatchHandler);
+
+    this.logger.log('[EventBus] LoggerPlugin installed');
   }
 
-  async uninstall(bus: EventBus<EM, GC>): Promise<void> {
-    this.logger.log('[EventBus] LoggingPlugin uninstalled');
+  async uninstall(): Promise<void> {
+    this.cleanup();
+    this.logger.log('[EventBus] LoggerPlugin uninstalled');
+  }
+
+  private cleanup(): void {
+    this.cleanupFunctions.forEach((cleanup) => cleanup());
+    this.cleanupFunctions = [];
   }
 }
