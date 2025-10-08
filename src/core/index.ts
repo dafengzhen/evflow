@@ -1,7 +1,5 @@
-import { ContextNormalizer } from './context-normalizer.ts';
-import { ErrorHandler } from './error-handler.ts';
-import { EventBus } from './event-bus.ts';
-import { EventTask } from './event-task.ts';
-import { HandlerExecutor } from './handler-executor.ts';
+import { EventBusFactoryImpl as EventBusFactory } from './event-bus-factory.ts';
+import { EventBusImpl as EventBus } from './event-bus.ts';
+import { EventTaskImpl as EventTask } from './event-task.ts';
 
-export { ContextNormalizer, ErrorHandler, EventBus, EventTask, HandlerExecutor };
+export { EventBus, EventBusFactory, EventTask };

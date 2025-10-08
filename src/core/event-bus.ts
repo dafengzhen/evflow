@@ -1,421 +1,670 @@
 import type {
-  BroadcastOptions,
-  DLQOperationResult,
-  EmitOptions,
-  EmitResult,
-  ErrorType,
+  EventBus,
   EventBusOptions,
+  EventBusPlugin,
   EventContext,
+  EventEmitOptions,
+  EventEmitResult,
   EventHandler,
   EventMap,
   EventMiddleware,
-  EventMigrator,
-  EventRecord,
-  EventStore,
   EventTaskOptions,
-  HandlerUsageStats,
-  HealthCheckResult,
-} from '../types.ts';
+  HandlerWrapper,
+  InstalledPlugin,
+  MiddlewareOptions,
+  MiddlewareWrapper,
+  PatternMatchingOptions,
+  PlainObject,
+} from '../types/types.ts';
 
-import { EventTimeoutError } from '../errors.ts';
-import { BroadcastManager, DLQManager, HandlerManager, StoreManager } from '../manager/index.ts';
-import { DEFAULT_EMIT_OPTIONS, now } from '../utils.ts';
-import { ContextNormalizer } from './context-normalizer.ts';
-import { ErrorHandler } from './error-handler.ts';
-import { HandlerExecutor } from './handler-executor.ts';
+import {
+  DEFAULT_MAX_CONCURRENCY,
+  DEFAULT_PARALLEL,
+  DEFAULT_PATTERN_OPTIONS,
+  DEFAULT_PRIORITY,
+  DEFAULT_STOP_ON_ERROR,
+} from '../constants.ts';
+import { sortByPriority } from '../utils.ts';
+import { EventTaskImpl } from './event-task.ts';
 
 /**
- * EventBus.
+ * EventBusImpl.
  *
  * @author dafengzhen
  */
-export class EventBus<EM extends EventMap> {
-  private readonly broadcastManager: BroadcastManager<EM>;
+export class EventBusImpl<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>
+  implements EventBus<EM, GC>
+{
+  private readonly globalMiddlewares: MiddlewareWrapper<EM, keyof EM, any, GC>[] = [];
 
-  private cleanupInterval?: ReturnType<typeof setInterval>;
+  private readonly handlers = new Map<keyof EM, HandlerWrapper<EM, keyof EM, any, GC>[]>();
 
-  private readonly contextNormalizer: ContextNormalizer<EM>;
+  private readonly installedPlugins: InstalledPlugin<EM, GC>[] = [];
 
-  private readonly dlqManager: DLQManager<EM>;
+  private readonly middlewares = new Map<keyof EM, MiddlewareWrapper<EM, any, any, GC>[]>();
 
-  private readonly errorHandler: ErrorHandler<EM>;
+  private readonly patternHandlers = new Map<string, HandlerWrapper<EM, keyof EM, any, GC>[]>();
 
-  private readonly handlerExecutor: HandlerExecutor<EM>;
+  private readonly patternMiddlewares = new Map<string, MiddlewareWrapper<EM, any, any, GC>[]>();
 
-  private readonly handlerManager: HandlerManager<EM>;
+  private readonly patternOptions: Required<PatternMatchingOptions>;
 
-  private isDestroyed = false;
-
-  private metrics = {
-    broadcastMessages: 0,
-    dlqOperations: 0,
-    eventsFailed: 0,
-    eventsProcessed: 0,
-    handlersExecuted: 0,
-  };
-
-  private readonly nodeId: string;
-
-  private readonly options: Required<EventBusOptions>;
-
-  private readonly storeManager: StoreManager<EM>;
-
-  constructor(store?: EventStore, options: EventBusOptions = {}) {
-    this.nodeId = `node_${Math.random().toString(36).slice(2, 9)}_${now()}`;
-    this.options = this.initializeOptions(options);
-
-    this.storeManager = new StoreManager(store, this.handleError.bind(this));
-    this.broadcastManager = new BroadcastManager(
-      this.nodeId,
-      this.handleError.bind(this),
-      this.options.maxProcessedBroadcasts,
-    );
-    this.handlerManager = new HandlerManager(this.options.maxHandlersPerEvent, this.options.maxMiddlewarePerEvent);
-    this.dlqManager = new DLQManager(this.storeManager, this.handleError.bind(this));
-
-    this.errorHandler = new ErrorHandler(this.options.errorHandler, this.storeManager);
-    this.contextNormalizer = new ContextNormalizer();
-    this.handlerExecutor = new HandlerExecutor(this.handlerManager, this.dlqManager, this.errorHandler);
-
-    this.broadcastManager.setEmitHandler(this.emit.bind(this));
-
-    if (this.options.cleanupIntervalMs > 0) {
-      this.startCleanup();
-    }
-  }
-
-  addBroadcastAdapter(adapter: any): void {
-    this.checkActive();
-    this.broadcastManager.addBroadcastAdapter(adapter);
-  }
-
-  addBroadcastFilter(filter: any): void {
-    this.checkActive();
-    this.broadcastManager.addBroadcastFilter(filter);
-  }
-
-  async broadcast<K extends keyof EM, R = any>(
-    eventName: K,
-    context: EventContext<EM[K]> = {} as EventContext<EM[K]>,
-    broadcastOptions: BroadcastOptions = {},
-    emitOptions: EmitOptions = {},
-  ): Promise<EmitResult<R>[]> {
-    this.checkActive();
-    this.validateEventName(eventName);
-
-    const normalized = this.contextNormalizer.normalize(eventName, context);
-    const result = await this.broadcastManager.broadcast(eventName, normalized, broadcastOptions, (evtName, ctx) =>
-      this.emit(evtName, ctx, undefined, emitOptions),
-    );
-
-    this.metrics.broadcastMessages++;
-    return result;
-  }
-
-  async destroy(): Promise<void> {
-    if (this.isDestroyed) {
-      return;
-    }
-
-    this.isDestroyed = true;
-    this.stopCleanup();
-
-    await Promise.allSettled([this.broadcastManager.destroy(), this.storeManager.destroy()]);
-
-    this.handlerManager.destroy();
-    this.dlqManager.destroy();
-
-    // Reset metrics
-    this.metrics = {
-      broadcastMessages: 0,
-      dlqOperations: 0,
-      eventsFailed: 0,
-      eventsProcessed: 0,
-      handlersExecuted: 0,
+  constructor(options?: EventBusOptions<EM, GC> & { patternMatching?: PatternMatchingOptions }) {
+    this.patternOptions = {
+      ...DEFAULT_PATTERN_OPTIONS,
+      ...options?.patternMatching,
     };
+    this.initialize(options);
   }
 
-  async emit<K extends keyof EM, R = any>(
-    eventName: K,
-    context: EventContext<EM[K]> = {} as EventContext<EM[K]>,
+  destroy(): void {
+    this.uninstallAllPlugins();
+    this.handlers.clear();
+    this.middlewares.clear();
+    this.patternHandlers.clear();
+    this.patternMiddlewares.clear();
+    this.globalMiddlewares.length = 0;
+  }
+
+  async emit<K extends keyof EM, R = unknown>(
+    event: K,
+    context: EventContext<EM[K], GC>,
     taskOptions?: EventTaskOptions,
-    emitOptions: EmitOptions = {},
-  ): Promise<EmitResult<R>[]> {
-    this.checkActive();
-    this.validateEventName(eventName);
+    emitOptions?: EventEmitOptions,
+  ): Promise<EventEmitResult<R>[]> {
+    const enhancedContext = this.enhanceContext(event, context);
+    const allHandlers = this.getAllHandlersForEvent(event);
 
-    const options = this.validateEmitOptions(emitOptions);
-    const normalized = this.contextNormalizer.normalize(eventName, context);
-
-    this.handlerManager.trackHandlerUsage(eventName, normalized.version!);
-    this.handlerManager.trackMiddlewareUsage(eventName);
-
-    const migrated = await this.migrateContext(eventName, normalized);
-
-    const handlers = this.handlerManager.getHandlers(eventName, migrated.version!);
-    if (handlers.length === 0) {
+    if (allHandlers.length === 0) {
+      this.handleNoHandlersWarning(event, enhancedContext, emitOptions);
       return [];
     }
 
-    try {
-      const executePromise = this.handlerExecutor.executeHandlers(handlers, migrated, taskOptions, options);
+    const {
+      globalTimeout,
+      maxConcurrency = DEFAULT_MAX_CONCURRENCY,
+      parallel = DEFAULT_PARALLEL,
+      stopOnError = DEFAULT_STOP_ON_ERROR,
+      traceId,
+    } = emitOptions ?? {};
+    const effectiveParallel = stopOnError ? false : parallel;
+    const eventMiddlewares = this.getFilteredMiddlewares(event, enhancedContext);
 
-      const rawResults = await this.withGlobalTimeout(executePromise, options.globalTimeout);
+    return this.processEvent(
+      enhancedContext,
+      allHandlers,
+      eventMiddlewares,
+      { effectiveParallel, globalTimeout, maxConcurrency, stopOnError, traceId },
+      taskOptions,
+      event,
+    );
+  }
 
-      this.metrics.eventsProcessed++;
-      this.metrics.handlersExecuted += handlers.length;
+  match<K extends keyof EM, R = unknown>(
+    pattern: string,
+    handler: EventHandler<EM, K, R, GC>,
+    options?: { once?: boolean; priority?: number },
+  ): () => void {
+    return this.registerHandler(this.patternHandlers, pattern, handler as EventHandler<EM, keyof EM, R, GC>, options);
+  }
+
+  off<K extends keyof EM, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void {
+    this.unregisterHandler(this.handlers, event, handler as EventHandler<EM, keyof EM, R, GC> | undefined);
+  }
+
+  on<K extends keyof EM, R = unknown>(
+    event: K,
+    handler: EventHandler<EM, K, R, GC>,
+    options?: { once?: boolean; priority?: number },
+  ): () => void {
+    return this.registerHandler(this.handlers, event, handler as EventHandler<EM, keyof EM, R, GC>, options);
+  }
+
+  unmatch<K extends keyof EM, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void {
+    this.unregisterHandler(this.patternHandlers, pattern, handler as EventHandler<EM, keyof EM, R, GC>);
+  }
+
+  use<K extends keyof EM, R = unknown>(
+    event: K,
+    middleware: EventMiddleware<EM, K, R, GC>,
+    options?: MiddlewareOptions,
+  ): () => void {
+    const wrapper: MiddlewareWrapper<EM, K, R, GC> = {
+      filter: options?.filter,
+      middleware,
+      priority: options?.priority ?? DEFAULT_PRIORITY,
+    };
+
+    const eventStr = event as string;
+    const targetMap =
+      this.patternOptions.wildcard && eventStr.includes(this.patternOptions.wildcard)
+        ? this.patternMiddlewares
+        : this.middlewares;
+
+    const middlewares = targetMap.get(eventStr) ?? [];
+    middlewares.push(wrapper);
+    middlewares.sort(sortByPriority);
+    targetMap.set(eventStr, middlewares);
+
+    return this.createMiddlewareRemover(event, eventStr, middleware);
+  }
+
+  useGlobalMiddleware<R = unknown>(
+    middleware: EventMiddleware<EM, keyof EM, R, GC>,
+    options?: MiddlewareOptions,
+  ): () => void {
+    const wrapper: MiddlewareWrapper<EM, keyof EM, R, GC> = {
+      filter: options?.filter,
+      middleware,
+      priority: options?.priority ?? DEFAULT_PRIORITY,
+    };
+
+    this.globalMiddlewares.push(wrapper);
+    this.globalMiddlewares.sort(sortByPriority);
+
+    return () => {
+      const index = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
+      if (index !== -1) {
+        this.globalMiddlewares.splice(index, 1);
+      }
+    };
+  }
+
+  usePlugin(plugin: EventBusPlugin<EM, GC>): () => void {
+    plugin.install?.(this);
+    this.installedPlugins.push({ plugin });
+    return () => {
+      const index = this.installedPlugins.findIndex((p) => p.plugin === plugin);
+      if (index !== -1) {
+        const [installedPlugin] = this.installedPlugins.splice(index, 1);
+        void this.safeUninstall(installedPlugin.plugin);
+      }
+    };
+  }
+
+  private cleanupOnceHandlers<K extends keyof EM>(event: K, handlers: HandlerWrapper<EM, K, any, GC>[]): void {
+    const onceHandlers = handlers.filter((h) => h.once).map((h) => h.handler);
+    if (onceHandlers.length === 0) {
+      return;
+    }
+
+    onceHandlers.forEach((handler) => {
+      this.off(event, handler);
+      for (const [pattern, patternHandlers] of this.patternHandlers.entries()) {
+        const filtered = patternHandlers.filter((w) => w.handler !== handler);
+        if (filtered.length === 0) {
+          this.patternHandlers.delete(pattern);
+        } else {
+          this.patternHandlers.set(pattern, filtered);
+        }
+      }
+    });
+  }
+
+  private createFailedResult<R>(error: unknown, traceId?: string): EventEmitResult<R> {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return {
+      error: {
+        error: err,
+        message: err.message,
+        stack: err.stack,
+      },
+      state: 'failed',
+      traceId,
+    };
+  }
+
+  private createHandlerExecutor<R>(
+    context: EventContext<any, GC>,
+    eventMiddlewares: MiddlewareWrapper<EM, any, any, GC>[],
+    options: { globalTimeout?: number; stopOnError: boolean; traceId?: string },
+    taskOptions?: EventTaskOptions,
+    results?: EventEmitResult<R>[],
+    stopFlag?: { value: boolean },
+  ) {
+    return async (handlerWrapper: HandlerWrapper<EM, any, R, GC>): Promise<void> => {
+      if (stopFlag?.value) {
+        return;
+      }
 
       try {
-        await this.storeManager.saveEventResults(migrated, rawResults);
-      } catch (storeErr) {
-        await this.handleError(this.toError(storeErr), migrated, 'store');
+        const wrappedHandler = this.createWrappedHandler(handlerWrapper.handler, eventMiddlewares, context);
+        const task = new EventTaskImpl<R>(context, wrappedHandler, taskOptions);
+        const result = await this.executeWithTimeout(task.execute(), options.globalTimeout);
+
+        if (options.traceId) {
+          result.traceId = options.traceId;
+        }
+
+        results?.push(result);
+
+        if (options.stopOnError && result.error) {
+          stopFlag!.value = true;
+        }
+      } catch (error) {
+        const failedResult = this.createFailedResult<R>(error, options.traceId);
+        results?.push(failedResult);
+
+        if (options.stopOnError) {
+          stopFlag!.value = true;
+        }
       }
-
-      return rawResults;
-    } catch (err) {
-      this.metrics.eventsFailed++;
-      throw err;
-    }
+    };
   }
 
-  async getDLQStats(
-    traceId?: string,
-  ): Promise<{ byEvent: Record<string, number>; newest: Date | null; oldest: Date | null; total: number }> {
-    return this.dlqManager.getDLQStats(traceId);
+  private createMiddlewareRemover<K extends keyof EM>(
+    event: K,
+    eventStr: string,
+    middleware: EventMiddleware<EM, K, any, GC>,
+  ): () => void {
+    return () => {
+      [this.middlewares, this.patternMiddlewares].forEach((map) => {
+        const list = map.get(eventStr) || map.get(event);
+        if (list) {
+          const filtered = list.filter((w) => w.middleware !== middleware);
+          if (filtered.length === 0) {
+            map.delete(eventStr);
+          } else {
+            map.set(eventStr, filtered);
+          }
+        }
+      });
+    };
   }
 
-  getMetrics() {
-    return { ...this.metrics, nodeId: this.nodeId };
+  private createWrappedHandler<K extends keyof EM, R>(
+    handler: EventHandler<EM, K, R, GC>,
+    middlewares: MiddlewareWrapper<EM, K, R, GC>[],
+    context: EventContext<EM[K], GC>,
+  ): () => Promise<R> {
+    return async (): Promise<R> => {
+      let middlewareIndex = -1;
+
+      const next = async (): Promise<R> => {
+        middlewareIndex++;
+        if (middlewareIndex < middlewares.length) {
+          return middlewares[middlewareIndex].middleware(context, next);
+        }
+        return handler(context) as Promise<R>;
+      };
+
+      return next();
+    };
   }
 
-  getNodeId(): string {
-    return this.nodeId;
+  private deduplicateHandlers<K extends keyof EM, R>(
+    handlers: HandlerWrapper<EM, K, R, GC>[],
+  ): HandlerWrapper<EM, K, R, GC>[] {
+    const seen = new Set<EventHandler<EM, K, R, GC>>();
+    return handlers.filter((wrapper) => {
+      if (seen.has(wrapper.handler)) {
+        return false;
+      }
+      seen.add(wrapper.handler);
+      return true;
+    });
   }
 
-  getUsageStats(): HandlerUsageStats {
-    return this.handlerManager.getUsageStats();
+  private deduplicateMiddlewares<K extends keyof EM, R>(
+    middlewares: MiddlewareWrapper<EM, K, R, GC>[],
+  ): MiddlewareWrapper<EM, K, R, GC>[] {
+    const seen = new Set<EventMiddleware<EM, K, R, GC>>();
+    return middlewares.filter((wrapper) => {
+      if (seen.has(wrapper.middleware)) {
+        return false;
+      }
+      seen.add(wrapper.middleware);
+      return true;
+    });
   }
 
-  async healthCheck(): Promise<HealthCheckResult> {
-    const adapterStatus = await this.broadcastManager.checkBroadcastAdapters();
-    const storeStatus = await this.storeManager.checkStoreHealth();
-    const allHealthy = adapterStatus.every((a) => a.healthy);
-    const storeHealthy = ['healthy', 'not_configured'].includes(storeStatus.status);
-
+  private enhanceContext<K extends keyof EM>(event: K, context: EventContext<EM[K], GC>): EventContext<EM[K], GC> {
     return {
-      details: {
-        adapters: adapterStatus,
-        metrics: this.getMetrics(),
-        store: storeStatus,
+      ...context,
+      meta: {
+        eventName: event as string,
+        ...context.meta,
       },
-      status: allHealthy && storeHealthy ? 'healthy' : 'degraded',
     };
   }
 
-  async listDLQ(traceId?: string): Promise<EventRecord[]> {
-    return this.dlqManager.listDLQ(traceId);
-  }
-
-  off<K extends keyof EM>(eventName: K, handler?: EventHandler<EM, K, any>, version?: number): boolean {
-    this.checkActive();
-    return this.handlerManager.off(eventName, handler, version);
-  }
-
-  on<K extends keyof EM>(eventName: K, handler: EventHandler<EM, K, any>, version = 1): () => void {
-    this.checkActive();
-    return this.handlerManager.on(eventName, handler, version);
-  }
-
-  async purgeDLQ(traceId: string, dlqId: string, reason?: string): Promise<boolean> {
-    const result = await this.dlqManager.purgeDLQ(traceId, dlqId, reason);
-    if (result) {
-      this.metrics.dlqOperations++;
-    }
-    return result;
-  }
-
-  async purgeMultipleDLQ(
-    traceId: string,
-    dlqIds: string[],
-  ): Promise<{ error?: string; id: string; success: boolean }[]> {
-    const results = await this.dlqManager.purgeMultipleDLQ(traceId, dlqIds);
-    this.metrics.dlqOperations += results.filter((r) => r.success).length;
-    return results;
-  }
-
-  registerMigrator<K extends keyof EM>(eventName: K, fromVersion: number, migrator: EventMigrator<EM, K>): () => void {
-    this.checkActive();
-    return this.handlerManager.registerMigrator(eventName, fromVersion, migrator);
-  }
-
-  removeBroadcastAdapter(name: string): void {
-    this.checkActive();
-    this.broadcastManager.removeBroadcastAdapter(name);
-  }
-
-  removeBroadcastFilter(filter: any): void {
-    this.checkActive();
-    this.broadcastManager.removeBroadcastFilter(filter);
-  }
-
-  async requeueDLQ(
-    traceId: string,
-    dlqId: string,
-    emitOptions?: EmitOptions,
-    taskOptions?: EventTaskOptions,
-  ): Promise<DLQOperationResult> {
-    const result = await this.dlqManager.requeueDLQ(traceId, dlqId, this.emit.bind(this), emitOptions, taskOptions);
-    this.metrics.dlqOperations++;
-    return result;
-  }
-
-  async requeueMultipleDLQ(
-    traceId: string,
-    dlqIds: string[],
-  ): Promise<{ error?: string; id: string; success: boolean }[]> {
-    const results = await this.dlqManager.requeueMultipleDLQ(traceId, dlqIds, this.emit.bind(this));
-    this.metrics.dlqOperations += results.filter((r) => r.success).length;
-    return results;
-  }
-
-  startCleanup(): void {
-    this.stopCleanup();
-    this.cleanupInterval = setInterval(() => this.cleanupInactiveHandlers(), this.options.cleanupIntervalMs);
-  }
-
-  stopCleanup(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = undefined;
-    }
-  }
-
-  async subscribeBroadcast(channels: string | string[], options: { adapter?: string } = {}): Promise<void> {
-    this.checkActive();
-    return this.broadcastManager.subscribeBroadcast(channels, options);
-  }
-
-  async unsubscribeBroadcast(channels: string | string[], adapterName?: string): Promise<void> {
-    this.checkActive();
-    return this.broadcastManager.unsubscribeBroadcast(channels, adapterName);
-  }
-
-  use<K extends keyof EM>(eventName: K, middleware: EventMiddleware<EM, K, any>): () => void {
-    this.checkActive();
-    return this.handlerManager.use(eventName, middleware);
-  }
-
-  private checkActive(): void {
-    if (this.isDestroyed) {
-      throw new Error('EventBus has been destroyed');
-    }
-  }
-
-  private cleanupInactiveHandlers(): void {
-    try {
-      if (typeof this.handlerManager.cleanup === 'function') {
-        this.handlerManager.cleanup({
-          handlerInactivityThreshold: this.options.handlerInactivityThreshold,
-          middlewareInactivityThreshold: this.options.middlewareInactivityThreshold,
-          migratorInactivityThreshold: this.options.migratorInactivityThreshold,
-        });
-      }
-    } catch (err) {
-      // Ensure cleanup failures don't crash the interval
-      void this.handleError(this.toError(err), {}, 'cleanup');
-    }
-  }
-
-  private async handleError<K extends keyof EM>(
-    error: Error,
-    context: EventContext<EM[K]>,
-    type: ErrorType,
+  private async executeHandlers<K extends keyof EM, R>(
+    handlers: HandlerWrapper<EM, K, R, GC>[],
+    executeHandler: (handler: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
+    parallel: boolean,
+    maxConcurrency: number,
+    stopFlag: { value: boolean },
   ): Promise<void> {
-    await this.errorHandler.handle(error, context, type);
+    return parallel
+      ? this.executeParallel(handlers, executeHandler, maxConcurrency, stopFlag)
+      : this.executeSequential(handlers, executeHandler, stopFlag);
   }
 
-  private initializeOptions(options: EventBusOptions): Required<EventBusOptions> {
-    return {
-      cleanupIntervalMs: options.cleanupIntervalMs === undefined ? 0 : (options.cleanupIntervalMs ?? 300000), // 5 minutes
-      errorHandler: options.errorHandler ?? (() => {}),
-      handlerInactivityThreshold: options.handlerInactivityThreshold ?? 3600000, // 1 hour
-      maxHandlersPerEvent: options.maxHandlersPerEvent ?? 100,
-      maxMiddlewarePerEvent: options.maxMiddlewarePerEvent ?? 50,
-      maxProcessedBroadcasts: options.maxProcessedBroadcasts ?? 10000,
-      middlewareInactivityThreshold: options.middlewareInactivityThreshold ?? 7200000, // 2 hours
-      migratorInactivityThreshold: options.migratorInactivityThreshold ?? 86400000, // 24 hours
+  private async executeParallel<K extends keyof EM, R>(
+    handlers: HandlerWrapper<EM, K, R, GC>[],
+    executeHandler: (handler: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
+    maxConcurrency: number,
+    stopFlag: { value: boolean },
+  ): Promise<void> {
+    const executing = new Set<Promise<void>>();
+
+    for (const handler of handlers) {
+      if (stopFlag.value) {
+        break;
+      }
+
+      while (executing.size >= maxConcurrency) {
+        if (stopFlag.value) {
+          break;
+        }
+        await Promise.race(executing);
+      }
+
+      if (stopFlag.value) {
+        break;
+      }
+
+      const promise = executeHandler(handler).finally(() => executing.delete(promise));
+      executing.add(promise);
+    }
+
+    await Promise.all(executing);
+  }
+
+  private async executeSequential<K extends keyof EM, R>(
+    handlers: HandlerWrapper<EM, K, R, GC>[],
+    executeHandler: (handler: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
+    stopFlag: { value: boolean },
+  ): Promise<void> {
+    for (const handler of handlers) {
+      if (stopFlag.value) {
+        break;
+      }
+      await executeHandler(handler);
+    }
+  }
+
+  private async executeWithGlobalMiddlewares(
+    context: EventContext<any, GC>,
+    finalExecutor: () => Promise<void>,
+  ): Promise<void> {
+    const applicableMiddlewares = this.globalMiddlewares.filter((mw) => !mw.filter || mw.filter(context));
+
+    let index = -1;
+    const next = async (): Promise<void> => {
+      index++;
+      return index < applicableMiddlewares.length
+        ? applicableMiddlewares[index].middleware(context, next as any)
+        : finalExecutor();
     };
+
+    await next();
   }
 
-  private async migrateContext<K extends keyof EM>(
-    eventName: K,
-    context: EventContext<EM[K]>,
-  ): Promise<EventContext<EM[K]>> {
-    try {
-      const migrated = this.handlerManager.migrateContext(eventName, context);
-      this.handlerManager.trackMigratorUsage(eventName);
-      return migrated;
-    } catch (err) {
-      await this.handleError(this.toError(err), context, 'migrator');
-      throw err;
-    }
-  }
-
-  private toError(err: unknown): Error {
-    return err instanceof Error ? err : new Error(String(err));
-  }
-
-  private validateEmitOptions(options: EmitOptions): Required<EmitOptions> {
-    const merged = { ...DEFAULT_EMIT_OPTIONS, ...options };
-    if (merged.globalTimeout < 0) {
-      throw new Error('globalTimeout must be non-negative');
-    }
-    if (merged.maxConcurrency && merged.maxConcurrency < 1) {
-      throw new Error('maxConcurrency must be ≥ 1');
-    }
-    return merged;
-  }
-
-  private validateEventName<K extends keyof EM>(eventName: K): void {
-    if (typeof eventName !== 'string' && typeof eventName !== 'symbol') {
-      throw new Error(`Invalid event name: ${String(eventName)}`);
-    }
-  }
-
-  private withGlobalTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {
-    if (!timeout || timeout <= 0) {
+  private executeWithTimeout<T>(promise: Promise<T>, timeout?: number): Promise<T> {
+    if (!timeout) {
       return promise;
     }
 
     return new Promise<T>((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        reject(new EventTimeoutError(`Global emit timeout after ${timeout}ms`));
-      }, timeout);
-
-      promise
-        .then((v) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          clearTimeout(timer);
-          resolve(v);
-        })
-        .catch((e) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          clearTimeout(timer);
-          reject(e);
-        });
+      const timer = setTimeout(() => reject(new Error(`Operation timed out after ${timeout}ms`)), timeout);
+      promise.finally(() => clearTimeout(timer)).then(resolve, reject);
     });
+  }
+
+  private getAllHandlersForEvent<K extends keyof EM>(event: K): HandlerWrapper<EM, K, any, GC>[] {
+    const exactHandlers = this.handlers.get(event) ?? [];
+    const patternHandlers = this.getMatchingPatternHandlers(event as string);
+    return this.deduplicateHandlers([...exactHandlers, ...patternHandlers]);
+  }
+
+  private getFilteredMiddlewares<K extends keyof EM>(
+    event: K,
+    context: EventContext<EM[K], GC>,
+  ): MiddlewareWrapper<EM, K, any, GC>[] {
+    const exactMiddlewares = this.middlewares.get(event) ?? [];
+    const patternMiddlewares = this.getMatchingPatternMiddlewares(event as string);
+    const allMiddlewares = this.deduplicateMiddlewares([...exactMiddlewares, ...patternMiddlewares]);
+    return allMiddlewares.filter((mw) => !mw.filter || mw.filter(context));
+  }
+
+  private getMatchingPatternHandlers(eventName: string): HandlerWrapper<EM, any, any, GC>[] {
+    const matchingHandlers: HandlerWrapper<EM, any, any, GC>[] = [];
+
+    for (const [pattern, handlers] of this.patternHandlers.entries()) {
+      if (this.isPatternMatch(eventName, pattern)) {
+        matchingHandlers.push(...handlers);
+      }
+    }
+
+    return matchingHandlers.sort(sortByPriority);
+  }
+
+  private getMatchingPatternMiddlewares(eventName: string): MiddlewareWrapper<EM, any, any, GC>[] {
+    const matchingMiddlewares: MiddlewareWrapper<EM, any, any, GC>[] = [];
+
+    for (const [pattern, middlewares] of this.patternMiddlewares.entries()) {
+      if (this.isPatternMatch(eventName, pattern)) {
+        matchingMiddlewares.push(...middlewares);
+      }
+    }
+
+    return matchingMiddlewares.sort(sortByPriority);
+  }
+
+  private handleNoHandlersWarning<K extends keyof EM>(
+    event: K,
+    context: EventContext<EM[K], GC>,
+    emitOptions?: EventEmitOptions,
+  ): void {
+    if (!emitOptions?.ignoreNoHandlersWarning) {
+      console.trace(`[EventBus] No handlers found for event "${String(event)}".`, 'Context:', context);
+    }
+  }
+
+  private initialize(options?: EventBusOptions<EM, GC>): void {
+    if (options?.globalMiddlewares) {
+      this.globalMiddlewares.push(
+        ...options.globalMiddlewares.map((mw) => ({ middleware: mw, priority: DEFAULT_PRIORITY })),
+      );
+    }
+
+    options?.plugins?.forEach((plugin) => this.usePlugin(plugin));
+  }
+
+  private isPatternMatch(eventName: string, pattern: string): boolean {
+    const { matchMultiple, separator, wildcard } = this.patternOptions;
+
+    if (pattern === wildcard) {
+      return true;
+    }
+    if (matchMultiple && wildcard && pattern === wildcard + wildcard) {
+      return true;
+    }
+
+    const eventParts = eventName.split(separator);
+    const patternParts = pattern.split(separator);
+
+    if (matchMultiple && patternParts.some((part) => wildcard && part === wildcard + wildcard)) {
+      return this.matchWithDoubleWildcard(eventParts, patternParts, 0, 0);
+    }
+
+    return this.matchSimpleSegments(eventParts, patternParts);
+  }
+
+  private matchSimpleSegments(eventParts: string[], patternParts: string[]): boolean {
+    const { wildcard } = this.patternOptions;
+    const commonWildcardChars = ['*', '?', '+', '#'];
+
+    if (eventParts.length !== patternParts.length) {
+      return false;
+    }
+
+    for (let i = 0; i < patternParts.length; i++) {
+      const patternPart = patternParts[i];
+      const eventPart = eventParts[i];
+
+      if (patternPart === wildcard) {
+        if (commonWildcardChars.includes(eventPart)) {
+          return false;
+        }
+        continue;
+      }
+
+      if (patternPart !== eventPart) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private matchWithDoubleWildcard(
+    eventParts: string[],
+    patternParts: string[],
+    eventIndex: number = 0,
+    patternIndex: number = 0,
+  ): boolean {
+    const { allowZeroLengthDoubleWildcard = false, wildcard } = this.patternOptions;
+    const doubleWildcard = wildcard + wildcard;
+
+    if (eventIndex === eventParts.length && patternIndex === patternParts.length) {
+      return true;
+    }
+
+    if (patternIndex === patternParts.length) {
+      return false;
+    }
+
+    const currentPattern = patternParts[patternIndex];
+
+    if (currentPattern === doubleWildcard) {
+      const hasMorePatterns = patternIndex < patternParts.length - 1;
+
+      if (!hasMorePatterns) {
+        return true;
+      }
+
+      const startIndex = allowZeroLengthDoubleWildcard ? eventIndex : eventIndex + 1;
+      for (let i = startIndex; i <= eventParts.length; i++) {
+        if (this.matchWithDoubleWildcard(eventParts, patternParts, i, patternIndex + 1)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (eventIndex >= eventParts.length) {
+      return false;
+    }
+
+    const currentEvent = eventParts[eventIndex];
+    const commonWildcardChars = ['*', '?', '+', '#'];
+
+    if (currentPattern === wildcard) {
+      if (commonWildcardChars.includes(currentEvent)) {
+        return false;
+      }
+    } else if (currentPattern !== currentEvent) {
+      return false;
+    }
+
+    return this.matchWithDoubleWildcard(eventParts, patternParts, eventIndex + 1, patternIndex + 1);
+  }
+
+  private async processEvent<K extends keyof EM, R = unknown>(
+    context: EventContext<EM[K], GC>,
+    allHandlers: HandlerWrapper<EM, K, any, GC>[],
+    eventMiddlewares: MiddlewareWrapper<EM, K, any, GC>[],
+    options: {
+      effectiveParallel: boolean;
+      globalTimeout?: number;
+      maxConcurrency: number;
+      stopOnError: boolean;
+      traceId?: string;
+    },
+    taskOptions?: EventTaskOptions,
+    event?: K,
+  ): Promise<EventEmitResult<R>[]> {
+    const results: EventEmitResult<R>[] = [];
+    const stopFlag = { value: false };
+
+    const executeHandler = this.createHandlerExecutor<R>(
+      context,
+      eventMiddlewares,
+      options,
+      taskOptions,
+      results,
+      stopFlag,
+    );
+
+    await this.executeWithGlobalMiddlewares(context, () =>
+      this.executeHandlers(allHandlers, executeHandler, options.effectiveParallel, options.maxConcurrency, stopFlag),
+    );
+
+    if (event) {
+      this.cleanupOnceHandlers(event, allHandlers);
+    }
+
+    return results;
+  }
+
+  private registerHandler<R>(
+    targetMap: Map<keyof EM | string, HandlerWrapper<EM, keyof EM, R, GC>[]>,
+    key: keyof EM | string,
+    handler: EventHandler<EM, keyof EM, R, GC>,
+    options?: { once?: boolean; priority?: number },
+  ): () => void {
+    const wrapper: HandlerWrapper<EM, keyof EM, R, GC> = {
+      handler,
+      once: options?.once ?? false,
+      priority: options?.priority ?? DEFAULT_PRIORITY,
+    };
+
+    const handlers = targetMap.get(key) ?? [];
+    handlers.push(wrapper);
+    handlers.sort(sortByPriority);
+    targetMap.set(key, handlers);
+
+    return () => this.unregisterHandler(targetMap, key, handler);
+  }
+
+  private async safeUninstall(plugin: EventBusPlugin<EM, GC>): Promise<void> {
+    try {
+      const result = plugin.uninstall?.(this);
+      if (result instanceof Promise) {
+        await result;
+      }
+    } catch (error) {
+      console.error('Error uninstalling plugin:', error);
+    }
+  }
+
+  private uninstallAllPlugins(): void {
+    for (let i = this.installedPlugins.length - 1; i >= 0; i--) {
+      void this.safeUninstall(this.installedPlugins[i].plugin);
+    }
+    this.installedPlugins.length = 0;
+  }
+
+  private unregisterHandler<R>(
+    targetMap: Map<keyof EM | string, HandlerWrapper<EM, keyof EM, R, GC>[]>,
+    key: keyof EM | string,
+    handler?: EventHandler<EM, keyof EM, R, GC>,
+  ): void {
+    if (!handler) {
+      targetMap.delete(key);
+      return;
+    }
+
+    const handlers = targetMap.get(key);
+    if (handlers) {
+      const filtered = handlers.filter((w) => w.handler !== handler);
+      if (filtered.length === 0) {
+        targetMap.delete(key);
+      } else {
+        targetMap.set(key, filtered);
+      }
+    }
   }
 }

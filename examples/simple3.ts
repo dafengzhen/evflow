@@ -1,46 +1,25 @@
-import type { EventMiddleware } from '../src/types.ts';
+import type { EventMap } from '../src/types/types.ts';
 
-import { EventBus } from '../src/index.ts';
+import { EventBusFactoryImpl as factory } from '../src/core/event-bus-factory.ts';
+import { LoggerPlugin } from '../src/index.ts';
 
-const authMiddleware: EventMiddleware<{ testEvent: { userRole: string } }> = async (ctx, next) => {
-  if (ctx.meta?.userRole !== 'admin') {
-    throw new Error('Permission denied');
-  }
-  return next();
-};
+interface MyEvents extends EventMap {
+  'user:login': { username: string };
+  'user:logout': { userId: number };
+}
 
-const transformMiddleware: EventMiddleware<{ testEvent: { payload: any } }> = async (ctx, next) => {
-  if (ctx.meta?.payload) {
-    ctx.meta.payload = { ...ctx.meta.payload, transformed: true };
-  }
-  return next();
-};
-
-const loggerMiddleware: EventMiddleware = async (ctx, next) => {
-  console.log(`[Event Start] ${ctx.name} - ${ctx.traceId}`);
-  const result = await next();
-  console.log(`[Event End] ${ctx.name} - ${ctx.traceId}`);
-  return result;
-};
-
-const perfMiddleware: EventMiddleware = async (ctx, next) => {
-  const start = Date.now();
-  const result = await next();
-  const duration = Date.now() - start;
-  console.log(`[Perf] ${ctx.name} took ${duration}ms`);
-  return result;
-};
-
-const bus = new EventBus<{ testEvent: { payload: any; userRole: string } }>();
-
-bus.use('testEvent', authMiddleware);
-bus.use('testEvent', transformMiddleware);
-bus.use('testEvent', loggerMiddleware);
-bus.use('testEvent', perfMiddleware);
-
-bus.on('testEvent', async (ctx) => {
-  console.log('Handler payload:', ctx.meta?.payload);
-  return 'done';
+const bus = factory.create<MyEvents>({
+  plugins: [new LoggerPlugin()],
 });
 
-await bus.emit('testEvent', { meta: { payload: { foo: 123 }, userRole: 'admin' } });
+bus.on('user:login', async (ctx) => {
+  console.log('handling login', ctx.data.username);
+  await new Promise((r) => setTimeout(r, 120));
+  if (ctx.data.username === 'error') {
+    throw new Error('bad user');
+  }
+  return { ok: true };
+});
+
+await bus.emit('user:login', { data: { username: 'alice' }, meta: { eventName: 'user:login' } });
+await bus.emit('user:login', { data: { username: 'error' }, meta: { eventName: 'user:login' } }).catch(() => {});

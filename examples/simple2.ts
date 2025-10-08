@@ -1,21 +1,56 @@
-import type { EventMap } from '../src/types.ts';
+import type { EventMap } from '../src/types/types.ts';
 
-import { EventBus, InMemoryEventStore } from '../src/index.ts';
+import { EventBusImpl } from '../src/core/event-bus.ts';
 
-interface MyEvents extends EventMap {
-  orderPlaced: { amount: number; orderId: string };
-  userCreated: { name: string; userId: string };
+interface MyEventMap extends EventMap {
+  numberEvent: { value: number };
+  testEvent: { data: string };
 }
 
-const store = new InMemoryEventStore();
-const bus = new EventBus<MyEvents>(store);
+const bus = new EventBusImpl<MyEventMap>();
 
-bus.on('userCreated', async (ctx) => {
-  console.log('Processing userCreated:', ctx.meta);
-  return { status: 'ok' };
+bus.on('testEvent', async (ctx) => {
+  console.log('handler1:', ctx.data.data);
+  return 'result1';
 });
 
-await bus.emit('userCreated', { meta: { name: 'Alice', userId: 'u1' } });
+bus.on(
+  'testEvent',
+  async (ctx) => {
+    console.log('handler2 (once):', ctx.data.data);
+    return 'result2';
+  },
+  { once: true },
+);
 
-const records = await store.loadByName('userCreated');
-console.log('Audit log:', records);
+bus.use('testEvent', async (ctx, next) => {
+  console.log('middleware before');
+  const result = await next();
+  console.log('middleware after');
+  return result;
+});
+
+bus.useGlobalMiddleware(async (ctx, next) => {
+  console.log('global middleware before');
+  const result = await next();
+  console.log('global middleware after');
+  return result;
+});
+
+const results = await bus.emit(
+  'testEvent',
+  { data: { data: 'hello world' } },
+  { maxRetries: 2 },
+  {
+    globalTimeout: 3000,
+    maxConcurrency: 2,
+    parallel: true,
+    stopOnError: false,
+    traceId: 'trace-123',
+  },
+);
+
+console.log('emit results:', results);
+
+const results2 = await bus.emit('testEvent', { data: { data: 'second call' } });
+console.log('emit results 2:', results2);

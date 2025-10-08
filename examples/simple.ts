@@ -1,18 +1,21 @@
-import type { EventMap } from '../src/types.ts';
+import { EventTaskImpl } from '../src/core/event-task.ts';
 
-import { EventBus } from '../src/index.ts';
+const task = new EventTaskImpl(
+  { data: { x: 1 } },
+  async (ctx) => {
+    console.log('executing', ctx.data);
+    if (Math.random() < 0.7) {
+      throw new Error('random fail');
+    }
+    return 'OK';
+  },
+  {
+    maxRetries: 3,
+    onRetry: (a, e) => console.log(`Retry #${a}`, e.message),
+    onStateChange: (s) => console.log('State:', s),
+    retryDelay: (n) => n * 500,
+    timeout: 2000,
+  },
+);
 
-interface MyEvents extends EventMap {
-  'user.created': { userId: string };
-  'user.deleted': { userId: string };
-}
-
-const bus = new EventBus<MyEvents>();
-
-bus.on('user.created', (ctx) => {
-  console.log('traceId', ctx.traceId, 'created user', ctx.meta?.userId);
-  return { ok: true };
-});
-
-const results = await bus.emit('user.created', { meta: { userId: '42' } });
-console.log(results);
+task.execute().then(console.log);

@@ -3,25 +3,20 @@
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-`EventBus` is a lightweight, TypeScript-first event system with **async task handling**, **retries**, **timeouts**, and **cancellation support**.
+**EventBus** is a TypeScript-based typed event bus implementation that provides a modular and extensible event system.
 
-It is designed for building reliable event-driven applications where event handlers may fail, timeout, or need retries.
+It supports global and scoped middleware, plugin mechanisms, pattern-based event matching, priority and concurrency control, as well as robust error handling mechanisms.
 
 [简体中文](./README.zh.md)
 
 ## ✨ Features
 
-- TypeScript generic event typing
-- Parallel or serial event emission
-- Global timeout control
-- Retry with backoff strategy
-- Task cancellation
-- Hook for task state change
-- Event persistence
-- Event versioning
-- Event version migration
-- Event broadcast
-- Middleware system
+- Global and scoped middleware
+- Plugin mechanism
+- Event pattern matching (supports wildcards)
+- Concurrency and sequential execution
+- Support for one-time event handlers
+- Timeout and error handling mechanisms
 
 ## 📦 Installation
 
@@ -32,36 +27,36 @@ npm install evflow
 ## 🚀 Usage
 
 ```ts
-import { EventBus, EventState } from "evflow";
+import { EventBus } from "evflow";
 
 type MyEvents = {
-  userLogin: { username: string };
   dataFetch: { url: string };
+  userLogin: { username: string };
 };
 
 const bus = new EventBus<MyEvents>();
 
 // Subscribe
-bus.on("userLogin", async (ctx) => {
-  console.log("User logged in:", ctx.meta.username);
+bus.on('userLogin', async (ctx) => {
+  console.log('User logged in:', ctx.data.username);
 });
 
 // Emit
-bus.emit("userLogin", { meta: { username: "alice" } });
+await bus.emit('userLogin', { data: { username: 'alice' } });
 ```
 
 ```ts
-bus.on("dataFetch", async (ctx) => {
+bus.on('dataFetch', async (ctx) => {
   // Simulate request
   await new Promise((r) => setTimeout(r, 200));
-  return `Fetched from ${ctx.meta.url}`;
+  return `Fetched from ${ctx.data.url}`;
 });
 
 const results = await bus.emit(
-  "dataFetch",
-  { meta: { url: "https://api.example.com" } },
-  { retries: 3, retryDelay: 100, timeout: 1000 },
-  { parallel: true, stopOnError: false, globalTimeout: 2000 }
+  'dataFetch',
+  { data: { url: 'https://api.example.com' } },
+  { maxRetries: 3, retryDelay: 100, timeout: 1000 },
+  { globalTimeout: 2000, parallel: true, stopOnError: false },
 );
 
 console.log(results);

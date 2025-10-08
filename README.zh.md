@@ -3,25 +3,20 @@
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-EventBus 是一个轻量级、TypeScript 优先的事件系统，支持 异步任务处理、重试机制、超时控制 和 任务取消
+**EventBus** 是一个基于 TypeScript 的类型事件总线实现，提供模块化、可扩展的事件系统
 
-非常适合在事件驱动架构中使用，尤其是事件可能失败、超时或需要重试的场景
+它支持全局和局部作用域的中间件、插件机制、基于模式的事件匹配、优先级与并发控制，以及健壮的错误处理机制
 
 [English](./README.md)
 
 ## ✨ 特性
 
-- TypeScript 强类型事件定义
-- 支持并行或串行执行
-- 全局超时控制
-- 重试 + 回退策略
-- 任务可取消
-- 状态变更钩子
-- 事件持久化
-- 事件版本化
-- 事件版本迁移
-- 事件广播
-- 中间件系统
+- 全局和局部中间件
+- 插件机制
+- 事件模式匹配（支持通配符）
+- 并发与顺序执行
+- 支持一次性事件处理器
+- 超时与错误处理机制
 
 ## 📦 安装
 
@@ -32,36 +27,36 @@ npm install evflow
 ## 🚀 使用示例
 
 ```ts
-import { EventBus, EventState } from "evflow";
+import { EventBus } from "evflow";
 
 type MyEvents = {
-  userLogin: { username: string };
   dataFetch: { url: string };
+  userLogin: { username: string };
 };
 
 const bus = new EventBus<MyEvents>();
 
-// 订阅事件
-bus.on("userLogin", async (ctx) => {
-  console.log("用户登录:", ctx.meta.username);
+// Subscribe
+bus.on('userLogin', async (ctx) => {
+  console.log('User logged in:', ctx.data.username);
 });
 
-// 触发事件
-bus.emit("userLogin", { meta: { username: "alice" } });
+// Emit
+await bus.emit('userLogin', { data: { username: 'alice' } });
 ```
 
 ```ts
-bus.on("dataFetch", async (ctx) => {
-  // 模拟请求
+bus.on('dataFetch', async (ctx) => {
+  // Simulate request
   await new Promise((r) => setTimeout(r, 200));
-  return `来自 ${ctx.meta.url} 的数据`;
+  return `Fetched from ${ctx.data.url}`;
 });
 
 const results = await bus.emit(
-  "dataFetch",
-  { meta: { url: "https://api.example.com" } },
-  { retries: 3, retryDelay: 100, timeout: 1000 },
-  { parallel: true, stopOnError: false, globalTimeout: 2000 }
+  'dataFetch',
+  { data: { url: 'https://api.example.com' } },
+  { maxRetries: 3, retryDelay: 100, timeout: 1000 },
+  { globalTimeout: 2000, parallel: true, stopOnError: false },
 );
 
 console.log(results);

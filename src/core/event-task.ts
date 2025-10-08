@@ -1,198 +1,197 @@
-import type { EventContext, EventHandler, EventMap, EventTaskOptions, PlainObject } from '../types.ts';
-
-import { EventState } from '../enums.ts';
-import { EventCancelledError, EventTimeoutError } from '../errors.ts';
-import { genId, now } from '../utils.ts';
+import type {
+  EventContext,
+  EventEmitResult,
+  EventError,
+  EventHandler,
+  EventState,
+  EventTask,
+  EventTaskOptions,
+} from '../types/types.ts';
 
 /**
- * EventBus.
+ * EventTaskImpl.
  *
  * @author dafengzhen
  */
-export class EventTask<EM extends EventMap, K extends keyof EM, R = any> {
-  public attempts = 0;
+export class EventTaskImpl<R = unknown> implements EventTask<R> {
+  constructor(
+    private readonly context: EventContext,
+    private readonly handler: EventHandler,
+    private readonly options: EventTaskOptions = {},
+  ) {}
 
-  public readonly id: string;
+  async execute(): Promise<EventEmitResult<R>> {
+    const { isRetryable, maxRetries = 0, onRetry, onStateChange, retryDelay, signal } = this.options;
 
-  public lastError: unknown = null;
+    let attempt = 0;
+    let state: EventState = 'pending';
 
-  public readonly name?: string;
-
-  public readonly opts: Required<EventTaskOptions>;
-
-  public state: EventState = EventState.Idle;
-
-  private abortController?: AbortController;
-
-  private readonly handler: EventHandler<EM, K, R>;
-
-  private isAborted = false;
-
-  private isDestroyed = false;
-
-  constructor(handler: EventHandler<EM, K, R>, opts?: EventTaskOptions) {
-    this.id = opts?.id ?? genId('evt');
-    this.name = opts?.name;
-    this.handler = handler;
-
-    this.opts = {
-      id: this.id,
-      isRetryable: opts?.isRetryable ?? (() => true),
-      name: this.name ?? this.id,
-      onStateChange: opts?.onStateChange ?? (() => {}),
-      retries: Math.max(0, opts?.retries ?? 1),
-      retryBackoff: Math.max(1, opts?.retryBackoff ?? 1),
-      retryDelay: Math.max(0, opts?.retryDelay ?? 200),
-      timeout: Math.max(0, opts?.timeout ?? 0),
-    };
-  }
-
-  cancel(): void {
-    if (this.isAborted || this.isDestroyed) {
-      return;
-    }
-
-    this.isAborted = true;
-    this.abortController?.abort();
-    this.setState(EventState.Cancelled, { timestamp: now() });
-  }
-
-  cleanup(): void {
-    this.cancel();
-    this.isDestroyed = true;
-  }
-
-  async run(context: EventContext<EM[K]> = {}): Promise<R> {
-    this.validateExecutionState();
-
-    const executionContext = this.buildExecutionContext(context);
-    this.setState(EventState.Running, { context: executionContext });
-
-    const maxAttempts = Math.max(1, this.opts.retries + 1);
-    let lastError: unknown = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      this.checkCancellation();
-      this.attempts = attempt;
-
-      try {
-        const result = await this.executeWithTimeout(executionContext);
-        this.setState(EventState.Succeeded, { attempt, result });
-        return result;
-      } catch (error) {
-        lastError = error;
-        this.lastError = error;
-
-        if (error instanceof EventCancelledError) {
-          this.setState(EventState.Cancelled, { attempt });
-          throw error;
-        }
-
-        this.setState(EventState.Failed, { attempt, error });
-
-        if (!this.shouldRetry(error) || attempt >= maxAttempts) {
-          break;
-        }
-
-        await this.delayBeforeRetry(attempt);
+    const changeState = (newState: EventState) => {
+      if (state !== newState) {
+        state = newState;
+        onStateChange?.(state);
       }
-    }
+    };
 
-    this.checkCancellation();
-    this.handleFinalError(lastError);
-    throw lastError;
+    try {
+      changeState('running');
+
+      while (true) {
+        this.ensureNotCancelled(signal);
+
+        try {
+          const result = await this.runWithTimeout();
+          changeState('succeeded');
+          return this.createResult('succeeded', result);
+        } catch (error) {
+          this.ensureNotCancelled(signal);
+
+          const eventError = this.normalizeError(error);
+
+          if (eventError.code === 'CANCELLED') {
+            changeState('cancelled');
+            return this.createResult('cancelled', undefined, eventError);
+          }
+
+          const shouldRetry = attempt < maxRetries && (isRetryable ? isRetryable(eventError) : true);
+
+          if (!shouldRetry) {
+            changeState('failed');
+            return this.createResult('failed', undefined, eventError);
+          }
+
+          attempt++;
+          changeState('retrying');
+          onRetry?.(attempt, eventError);
+
+          const delay = typeof retryDelay === 'function' ? retryDelay(attempt) : (retryDelay ?? 0);
+
+          if (delay > 0) {
+            try {
+              await this.wait(delay, signal);
+            } catch (waitError) {
+              const waitEventError = this.normalizeError(waitError);
+
+              if (waitEventError.code === 'CANCELLED') {
+                changeState('cancelled');
+                return this.createResult('cancelled', undefined, waitEventError);
+              }
+
+              // noinspection ExceptionCaughtLocallyJS
+              throw waitError;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      const eventError = this.normalizeError(error);
+
+      if (eventError.code === 'CANCELLED') {
+        changeState('cancelled');
+        return this.createResult('cancelled', undefined, eventError);
+      }
+
+      changeState('failed');
+      return this.createResult('failed', undefined, eventError);
+    }
   }
 
-  private buildExecutionContext(context: EventContext<EM[K]>): EventContext<EM[K]> {
+  private createError(code: string, message: string, error?: unknown): EventError {
     return {
-      ...context,
-      id: context.id ?? this.id,
-      name: context.name ?? this.name,
-      timestamp: context.timestamp ?? now(),
-      traceId: context.traceId ?? genId('trace'),
+      code,
+      error,
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
     };
   }
 
-  private checkCancellation(): void {
-    if (this.isDestroyed || this.isAborted) {
-      throw new EventCancelledError();
+  private createResult(state: EventState, result?: R, error?: EventError): EventEmitResult<R> {
+    return { error, result, state };
+  }
+
+  private ensureNotCancelled(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+      throw this.createError('CANCELLED', 'Task was cancelled');
     }
   }
 
-  private async createTimeoutRace(handlerPromise: Promise<R>, signal: AbortSignal): Promise<R> {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.abortController?.abort();
-        reject(new EventTimeoutError(`Task ${this.id} timed out after ${this.opts.timeout}ms`));
-      }, this.opts.timeout);
+  private normalizeError(error: unknown): EventError {
+    if (error instanceof Error) {
+      return {
+        code: (error as any).code ?? 'UNKNOWN',
+        error,
+        message: error.message,
+        stack: error.stack,
+      };
+    }
 
-      signal.addEventListener('abort', () => clearTimeout(timeoutId), {
-        once: true,
-      });
+    if (typeof error === 'object' && error !== null && 'message' in error) {
+      const e = error as { code?: string; message?: string; stack?: string };
+      return {
+        code: e.code ?? 'UNKNOWN',
+        error,
+        message: e.message ?? String(error),
+        stack: e.stack,
+      };
+    }
+
+    return this.createError('UNKNOWN', String(error ?? 'Unknown error'), error);
+  }
+
+  private async runWithTimeout(): Promise<R> {
+    const { signal, timeout } = this.options;
+
+    if (!timeout && !signal) {
+      return (await Promise.resolve(this.handler(this.context))) as Promise<R>;
+    }
+
+    return new Promise<R>((resolve, reject) => {
+      const timer = timeout ? setTimeout(() => reject(this.createError('TIMEOUT', 'Task timed out')), timeout) : null;
+
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      const onAbort = () => {
+        cleanup();
+        reject(this.createError('CANCELLED', 'Task was cancelled'));
+      };
+
+      signal?.addEventListener('abort', onAbort);
+
+      Promise.resolve(this.handler(this.context))
+        .then((result) => {
+          cleanup();
+          resolve(result as R);
+        })
+        .catch((error) => {
+          cleanup();
+          reject(error);
+        });
     });
-
-    return Promise.race([handlerPromise, timeoutPromise]);
   }
 
-  private async delayBeforeRetry(attempt: number): Promise<void> {
-    const delay = Math.round(this.opts.retryDelay * Math.pow(this.opts.retryBackoff, attempt - 1));
+  private wait(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, ms);
 
-    if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
 
-  private async executeWithTimeout(context: EventContext<EM[K]>): Promise<R> {
-    this.checkCancellation();
+      const onAbort = () => {
+        cleanup();
+        reject(this.createError('CANCELLED', 'Task was cancelled'));
+      };
 
-    this.abortController = new AbortController();
-    const { signal } = this.abortController;
-
-    const handlerPromise = Promise.resolve()
-      .then(() => this.handler({ ...context, signal }))
-      .then((result) => {
-        this.checkCancellation();
-        return result;
-      });
-
-    if (this.opts.timeout <= 0) {
-      return handlerPromise;
-    }
-
-    return this.createTimeoutRace(handlerPromise, signal);
-  }
-
-  private handleFinalError(error: unknown): void {
-    const finalState = error instanceof EventTimeoutError ? EventState.Timeout : EventState.Failed;
-
-    this.setState(finalState, {
-      attempts: this.attempts,
-      error,
+      signal?.addEventListener('abort', onAbort);
     });
-  }
-
-  private setState(state: EventState, info?: PlainObject): void {
-    if (this.isDestroyed) {
-      return;
-    }
-
-    this.state = state;
-    try {
-      this.opts.onStateChange(state, info);
-    } catch (error) {
-      console.error('Error in onStateChange callback:', error);
-    }
-  }
-
-  private shouldRetry(error: unknown): boolean {
-    return this.opts.isRetryable(error);
-  }
-
-  private validateExecutionState(): void {
-    this.checkCancellation();
-
-    if (this.state === EventState.Running) {
-      throw new Error('Task is already running');
-    }
   }
 }
