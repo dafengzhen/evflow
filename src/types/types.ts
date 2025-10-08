@@ -1,49 +1,11 @@
-export interface EventBus<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>> {
-  destroy(): void;
-  emit<K extends keyof EM, R = unknown>(
-    event: K,
-    context: EventContext<EM[K], GC>,
-    taskOptions?: EventTaskOptions,
-    emitOptions?: EventEmitOptions,
-  ): Promise<EventEmitResult<R>[]>;
-  match<K extends keyof EM, R = unknown>(
-    pattern: string,
-    handler: EventHandler<EM, K, R, GC>,
-    options?: { once?: boolean; priority?: number },
-  ): () => void;
-  off<K extends keyof EM, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void;
-  on<K extends keyof EM, R = unknown>(
-    event: K,
-    handler: EventHandler<EM, K, R, GC>,
-    options?: { once?: boolean; priority?: number },
-  ): () => void;
-  unmatch<K extends keyof EM, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void;
-  use<K extends keyof EM, R = unknown>(
-    event: K,
-    middleware: EventMiddleware<EM, K, R, GC>,
-    options?: MiddlewareOptions,
-  ): () => void;
-  useGlobalMiddleware<R = unknown>(
-    middleware: EventMiddleware<EM, keyof EM, R, GC>,
-    options?: MiddlewareOptions,
-  ): () => void;
-  usePlugin(plugin: EventBusPlugin<EM, GC>): () => void;
-}
-
-export interface EventBusFactory {
-  create<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>(
-    options?: EventBusOptions<EM, GC>,
-  ): EventBus<EM, GC>;
-}
-
 export interface EventBusOptions<EM extends EventMap, GC extends PlainObject = Record<string, never>> {
   globalMiddlewares?: EventMiddleware<EM, keyof EM, any, GC>[];
   plugins?: EventBusPlugin<EM, GC>[];
 }
 
 export interface EventBusPlugin<EM extends EventMap = EventMap, GC extends PlainObject = Record<string, never>> {
-  install(bus: EventBus<EM, GC>): Promise<void> | void;
-  uninstall?(bus: EventBus<EM, GC>): Promise<void> | void;
+  install(bus: IEventBus<EM, GC>): Promise<void> | void;
+  uninstall?(bus: IEventBus<EM, GC>): Promise<void> | void;
 }
 
 export interface EventContext<T extends PlainObject = PlainObject, GC extends PlainObject = PlainObject> {
@@ -102,10 +64,6 @@ export type EventMiddleware<
 
 export type EventState = 'cancelled' | 'failed' | 'pending' | 'retrying' | 'running' | 'succeeded' | 'timeout';
 
-export interface EventTask<R = unknown> {
-  execute(): Promise<EventEmitResult<R>>;
-}
-
 export interface EventTaskOptions {
   isRetryable?: (error: EventError) => boolean;
   maxRetries?: number;
@@ -120,6 +78,51 @@ export interface HandlerWrapper<EM extends EventMap, K extends keyof EM, R, GC e
   handler: EventHandler<EM, K, R, GC>;
   once: boolean;
   priority: number;
+}
+
+export interface IEventBus<
+  EM extends EventMap = Record<string, never>,
+  GC extends PlainObject = Record<string, never>,
+> {
+  destroy(): void;
+  emit<K extends keyof EM, R = unknown>(
+    event: K,
+    context: EventContext<EM[K], GC>,
+    taskOptions?: EventTaskOptions,
+    emitOptions?: EventEmitOptions,
+  ): Promise<EventEmitResult<R>[]>;
+  match<K extends keyof EM, R = unknown>(
+    pattern: string,
+    handler: EventHandler<EM, K, R, GC>,
+    options?: { once?: boolean; priority?: number },
+  ): () => void;
+  off<K extends keyof EM, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void;
+  on<K extends keyof EM, R = unknown>(
+    event: K,
+    handler: EventHandler<EM, K, R, GC>,
+    options?: { once?: boolean; priority?: number },
+  ): () => void;
+  unmatch<K extends keyof EM, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void;
+  use<K extends keyof EM, R = unknown>(
+    event: K,
+    middleware: EventMiddleware<EM, K, R, GC>,
+    options?: MiddlewareOptions,
+  ): () => void;
+  useGlobalMiddleware<R = unknown>(
+    middleware: EventMiddleware<EM, keyof EM, R, GC>,
+    options?: MiddlewareOptions,
+  ): () => void;
+  usePlugin(plugin: EventBusPlugin<EM, GC>): () => void;
+}
+
+export interface IEventBusFactory {
+  create<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>(
+    options?: EventBusOptions<EM, GC>,
+  ): IEventBus<EM, GC>;
+}
+
+export interface IEventTask<R = unknown> {
+  execute(): Promise<EventEmitResult<R>>;
 }
 
 export interface InstalledPlugin<EM extends EventMap, GC extends PlainObject = Record<string, never>> {

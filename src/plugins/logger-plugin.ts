@@ -1,4 +1,4 @@
-import type { EventBus, EventBusPlugin, EventMap, PlainObject } from '../types/types.ts';
+import type { EventBusPlugin, EventMap, IEventBus, PlainObject } from '../types/types.ts';
 
 /**
  * LoggerPlugin.
@@ -14,7 +14,7 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
     this.logger = logger;
   }
 
-  async install(bus: EventBus<EM, GC>): Promise<void> {
+  async install(bus: IEventBus<EM, GC>): Promise<void> {
     this.cleanup();
 
     const removeGlobalMiddleware = bus.useGlobalMiddleware(async (context, next) => {

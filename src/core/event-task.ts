@@ -4,16 +4,16 @@ import type {
   EventError,
   EventHandler,
   EventState,
-  EventTask,
   EventTaskOptions,
+  IEventTask,
 } from '../types/types.ts';
 
 /**
- * EventTaskImpl.
+ * EventTask.
  *
  * @author dafengzhen
  */
-export class EventTaskImpl<R = unknown> implements EventTask<R> {
+export class EventTask<R = unknown> implements IEventTask<R> {
   constructor(
     private readonly context: EventContext,
     private readonly handler: EventHandler,

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { EventContext, EventError, EventHandler, EventState, EventTaskOptions } from '../types/types.ts';
 
-import { EventTaskImpl } from './event-task.ts';
+import { EventTask } from './event-task.ts';
 
 describe('EventTaskImpl', () => {
   const mockContext: EventContext = {
@@ -17,7 +17,7 @@ describe('EventTaskImpl', () => {
       const handler: EventHandler = vi.fn().mockResolvedValue(mockResult);
       const options: EventTaskOptions = {};
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const result = await task.execute();
 
       expect(handler).toHaveBeenCalledWith(mockContext);
@@ -30,7 +30,7 @@ describe('EventTaskImpl', () => {
       const mockResult = { success: true };
       const handler: EventHandler = vi.fn().mockReturnValue(mockResult);
 
-      const task = new EventTaskImpl(mockContext, handler);
+      const task = new EventTask(mockContext, handler);
       const result = await task.execute();
 
       expect(result.state).toBe('succeeded');
@@ -45,7 +45,7 @@ describe('EventTaskImpl', () => {
         .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('slow'), 100)));
       const options: EventTaskOptions = { timeout: 50 };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
       await vi.advanceTimersByTimeAsync(100);
@@ -65,7 +65,7 @@ describe('EventTaskImpl', () => {
         .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('data'), 100)));
       const options: EventTaskOptions = { signal: abortController.signal };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
       abortController.abort();
@@ -96,7 +96,7 @@ describe('EventTaskImpl', () => {
         retryDelay: 10,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const result = await task.execute();
 
       expect(handler).toHaveBeenCalledTimes(3);
@@ -122,7 +122,7 @@ describe('EventTaskImpl', () => {
         retryDelay,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
       // Advance through all retry delays
@@ -155,7 +155,7 @@ describe('EventTaskImpl', () => {
         maxRetries: 3,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const result = await task.execute();
 
       expect(handler).toHaveBeenCalledTimes(2);
@@ -172,7 +172,7 @@ describe('EventTaskImpl', () => {
       const handler: EventHandler = vi.fn().mockRejectedValue(new Error('Failed'));
       const options: EventTaskOptions = { maxRetries: 0 };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const result = await task.execute();
 
       expect(handler).toHaveBeenCalledTimes(1);
@@ -186,7 +186,7 @@ describe('EventTaskImpl', () => {
       const handler: EventHandler = vi.fn();
       const options: EventTaskOptions = { signal: abortController.signal };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const result = await task.execute();
 
       expect(handler).not.toHaveBeenCalled();
@@ -212,7 +212,7 @@ describe('EventTaskImpl', () => {
         signal: abortController.signal,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
       // Wait for first execution to complete and enter retrying state
@@ -244,7 +244,7 @@ describe('EventTaskImpl', () => {
 
       for (const { error, expectedCode } of testCases) {
         const handler: EventHandler = vi.fn().mockRejectedValue(error);
-        const task = new EventTaskImpl(mockContext, handler);
+        const task = new EventTask(mockContext, handler);
         const result = await task.execute();
 
         expect(result.state).toBe('failed');
@@ -260,7 +260,7 @@ describe('EventTaskImpl', () => {
         onStateChange: (state) => states.push(state),
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       await task.execute();
 
       expect(states).toEqual(['running', 'succeeded']);
@@ -273,7 +273,7 @@ describe('EventTaskImpl', () => {
         onStateChange: (state) => states.push(state),
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       await task.execute();
 
       expect(states).toEqual(['running', 'failed']);
@@ -296,7 +296,7 @@ describe('EventTaskImpl', () => {
         retryDelay: 0,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       await task.execute();
 
       expect(states).toEqual(['running', 'retrying', 'succeeded']);
@@ -314,7 +314,7 @@ describe('EventTaskImpl', () => {
         timeout: 200,
       };
 
-      const task = new EventTaskImpl(mockContext, handler, options);
+      const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
       // Cancel before timeout
@@ -330,7 +330,7 @@ describe('EventTaskImpl', () => {
 
   describe('error normalization', () => {
     it('should create error with stack trace from Error object', () => {
-      const task = new EventTaskImpl(mockContext, vi.fn());
+      const task = new EventTask(mockContext, vi.fn());
       const testError = new Error('Test error');
 
       // @ts-expect-error - Accessing private method for testing
@@ -346,7 +346,7 @@ describe('EventTaskImpl', () => {
       const customError = { code: 'CUSTOM_CODE', message: 'Custom message' };
       const handler: EventHandler = vi.fn().mockRejectedValue(customError);
 
-      const task = new EventTaskImpl(mockContext, handler);
+      const task = new EventTask(mockContext, handler);
       const result = await task.execute();
 
       expect(result.error?.code).toBe('CUSTOM_CODE');
@@ -356,7 +356,7 @@ describe('EventTaskImpl', () => {
     it('should normalize string errors', async () => {
       const handler: EventHandler = vi.fn().mockRejectedValue('String error');
 
-      const task = new EventTaskImpl(mockContext, handler);
+      const task = new EventTask(mockContext, handler);
       const result = await task.execute();
 
       expect(result.error?.code).toBe('UNKNOWN');
@@ -366,7 +366,7 @@ describe('EventTaskImpl', () => {
     it('should normalize error without message property', async () => {
       const handler: EventHandler = vi.fn().mockRejectedValue({ someProperty: 'value' });
 
-      const task = new EventTaskImpl(mockContext, handler);
+      const task = new EventTask(mockContext, handler);
       const result = await task.execute();
 
       expect(result.error?.code).toBe('UNKNOWN');
@@ -376,7 +376,7 @@ describe('EventTaskImpl', () => {
 
   describe('result creation', () => {
     it('should create result with success state', () => {
-      const task = new EventTaskImpl(mockContext, vi.fn());
+      const task = new EventTask(mockContext, vi.fn());
       const mockResult = { data: 'test' };
 
       const result = task['createResult']('succeeded', mockResult);
@@ -387,7 +387,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should create result with error state', () => {
-      const task = new EventTaskImpl(mockContext, vi.fn());
+      const task = new EventTask(mockContext, vi.fn());
       const mockError: EventError = { code: 'ERROR', message: 'Test error' };
 
       const result = task['createResult']('failed', undefined, mockError);
@@ -398,7 +398,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should create result with cancelled state', () => {
-      const task = new EventTaskImpl(mockContext, vi.fn());
+      const task = new EventTask(mockContext, vi.fn());
       const mockError: EventError = { code: 'CANCELLED', message: 'Cancelled' };
 
       const result = task['createResult']('cancelled', undefined, mockError);

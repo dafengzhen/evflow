@@ -1,11 +1,16 @@
-import type { EventBus, EventBusFactory, EventBusOptions, EventMap, PlainObject } from '../types/types.ts';
+import type { EventBusOptions, EventMap, IEventBus, IEventBusFactory, PlainObject } from '../types/types.ts';
 
-import { EventBusImpl } from './event-bus.ts';
+import { EventBus } from './event-bus.ts';
 
-export const EventBusFactoryImpl: EventBusFactory = {
+/**
+ * EventBusFactory.
+ *
+ * @author dafengzhen
+ */
+export const EventBusFactory: IEventBusFactory = {
   create<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>(
     options?: EventBusOptions<EM, GC>,
-  ): EventBus<EM, GC> {
-    return new EventBusImpl<EM, GC>(options);
+  ): IEventBus<EM, GC> {
+    return new EventBus<EM, GC>(options);
   },
 };

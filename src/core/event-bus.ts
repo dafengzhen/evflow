@@ -1,5 +1,4 @@
 import type {
-  EventBus,
   EventBusOptions,
   EventBusPlugin,
   EventContext,
@@ -10,6 +9,7 @@ import type {
   EventMiddleware,
   EventTaskOptions,
   HandlerWrapper,
+  IEventBus,
   InstalledPlugin,
   MiddlewareOptions,
   MiddlewareWrapper,
@@ -25,15 +25,15 @@ import {
   DEFAULT_STOP_ON_ERROR,
 } from '../constants.ts';
 import { sortByPriority } from '../utils.ts';
-import { EventTaskImpl } from './event-task.ts';
+import { EventTask } from './event-task.ts';
 
 /**
- * EventBusImpl.
+ * EventBus.
  *
  * @author dafengzhen
  */
-export class EventBusImpl<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>
-  implements EventBus<EM, GC>
+export class EventBus<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>
+  implements IEventBus<EM, GC>
 {
   private readonly globalMiddlewares: MiddlewareWrapper<EM, keyof EM, any, GC>[] = [];
 
@@ -229,7 +229,7 @@ export class EventBusImpl<EM extends EventMap = Record<string, never>, GC extend
 
       try {
         const wrappedHandler = this.createWrappedHandler(handlerWrapper.handler, eventMiddlewares, context);
-        const task = new EventTaskImpl<R>(context, wrappedHandler, taskOptions);
+        const task = new EventTask<R>(context, wrappedHandler, taskOptions);
         const result = await this.executeWithTimeout(task.execute(), options.globalTimeout);
 
         if (options.traceId) {

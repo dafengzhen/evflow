@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  EventBus,
   EventBusPlugin,
   EventContext,
   EventHandler,
   EventMap,
   EventMiddleware,
   EventTaskOptions,
+  IEventBus,
   MiddlewareOptions,
   PlainObject,
 } from '../types/types.ts';
 
-import { EventBusImpl } from './event-bus.ts';
+import { EventBus } from './event-bus.ts';
 
 interface TestEvents extends EventMap {
   'order.placed': { amount: number; orderId: string };
@@ -26,10 +26,10 @@ interface TestGlobalContext extends PlainObject {
 }
 
 describe('EventBusImpl', () => {
-  let eventBus: EventBus<TestEvents, TestGlobalContext>;
+  let eventBus: IEventBus<TestEvents, TestGlobalContext>;
 
   beforeEach(() => {
-    eventBus = new EventBusImpl<TestEvents, TestGlobalContext>();
+    eventBus = new EventBus<TestEvents, TestGlobalContext>();
   });
 
   afterEach(() => {
@@ -50,7 +50,7 @@ describe('EventBusImpl', () => {
         async (ctx, next) => next(),
       );
 
-      const bus = new EventBusImpl<TestEvents, TestGlobalContext>({
+      const bus = new EventBus<TestEvents, TestGlobalContext>({
         globalMiddlewares: [globalMiddleware],
       });
 
@@ -63,7 +63,7 @@ describe('EventBusImpl', () => {
         uninstall: vi.fn(),
       };
 
-      const bus = new EventBusImpl<TestEvents, TestGlobalContext>({
+      const bus = new EventBus<TestEvents, TestGlobalContext>({
         plugins: [mockPlugin],
       });
 
@@ -715,11 +715,11 @@ describe('EventBusImpl', () => {
 });
 
 describe('EventBus Pattern Matching', () => {
-  let bus: EventBusImpl<any>;
+  let bus: EventBus<any>;
   const mockHandler = vi.fn();
 
   beforeEach(() => {
-    bus = new EventBusImpl();
+    bus = new EventBus();
     mockHandler.mockClear();
   });
 
@@ -798,7 +798,7 @@ describe('EventBus Pattern Matching', () => {
 });
 
 describe('Advanced Pattern Matching', () => {
-  let bus: EventBusImpl<any>;
+  let bus: EventBus<any>;
   const mockHandler = vi.fn();
 
   beforeEach(() => {
@@ -807,7 +807,7 @@ describe('Advanced Pattern Matching', () => {
 
   describe('Custom pattern matching options', () => {
     it('should support custom separator', async () => {
-      const customBus = new EventBusImpl<any>({
+      const customBus = new EventBus<any>({
         patternMatching: { separator: ':', wildcard: '*' },
       });
 
@@ -821,7 +821,7 @@ describe('Advanced Pattern Matching', () => {
     });
 
     it('should support custom wildcard character', async () => {
-      const customBus = new EventBusImpl<any>({
+      const customBus = new EventBus<any>({
         patternMatching: { separator: '.', wildcard: '?' },
       });
 
@@ -837,7 +837,7 @@ describe('Advanced Pattern Matching', () => {
 
   describe('Multiple wildcard patterns', () => {
     it('should handle multiple wildcards in single pattern', async () => {
-      bus = new EventBusImpl();
+      bus = new EventBus();
       bus.match('*.action.*', mockHandler);
 
       await bus.emit('user.action.created', { data: {} });
@@ -849,7 +849,7 @@ describe('Advanced Pattern Matching', () => {
     });
 
     it('should support double wildcard for multiple segments', async () => {
-      bus = new EventBusImpl({
+      bus = new EventBus({
         patternMatching: { matchMultiple: true },
       });
 
@@ -864,7 +864,7 @@ describe('Advanced Pattern Matching', () => {
     });
 
     it('should match with double wildcard at beginning', async () => {
-      bus = new EventBusImpl({
+      bus = new EventBus({
         patternMatching: { matchMultiple: true },
       });
 
@@ -879,7 +879,7 @@ describe('Advanced Pattern Matching', () => {
     });
 
     it('should match with double wildcard in middle', async () => {
-      bus = new EventBusImpl({
+      bus = new EventBus({
         patternMatching: { matchMultiple: true },
       });
 
@@ -896,13 +896,13 @@ describe('Advanced Pattern Matching', () => {
 });
 
 describe('Pattern Handler Management', () => {
-  let bus: EventBusImpl<any>;
+  let bus: EventBus<any>;
   const handler1 = vi.fn();
   const handler2 = vi.fn();
   const handler3 = vi.fn();
 
   beforeEach(() => {
-    bus = new EventBusImpl();
+    bus = new EventBus();
     handler1.mockClear();
     handler2.mockClear();
     handler3.mockClear();
@@ -1015,10 +1015,10 @@ describe('Pattern Handler Management', () => {
 });
 
 describe('Pattern Matching Integration', () => {
-  let bus: EventBusImpl<any>;
+  let bus: EventBus<any>;
 
   beforeEach(() => {
-    bus = new EventBusImpl();
+    bus = new EventBus();
   });
 
   describe('Mixed exact and pattern matching', () => {
@@ -1097,7 +1097,7 @@ describe('Pattern Matching Integration', () => {
     });
 
     it('should handle complex event hierarchies', async () => {
-      bus = new EventBusImpl({
+      bus = new EventBus({
         patternMatching: {
           matchMultiple: true,
           separator: '.',
@@ -1170,10 +1170,10 @@ describe('Pattern Matching Integration', () => {
 });
 
 describe('Pattern Matching Error Handling', () => {
-  let bus: EventBusImpl<any>;
+  let bus: EventBus<any>;
 
   beforeEach(() => {
-    bus = new EventBusImpl();
+    bus = new EventBus();
   });
 
   describe('Invalid pattern handling', () => {

@@ -1,6 +1,6 @@
-import { EventTaskImpl } from '../src/core/event-task.ts';
+import { EventTask } from '../src/index.ts';
 
-const task = new EventTaskImpl(
+const task = new EventTask(
   { data: { x: 1 } },
   async (ctx) => {
     console.log('executing', ctx.data);

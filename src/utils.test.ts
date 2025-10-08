@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EventError, EventState } from './types/types.ts';
 
-import { EventTaskImpl } from './core/event-task.ts';
+import { EventTask } from './core/index.ts';
 import { RetryConditions, RetryStrategies } from './utils.ts';
 
 const mockContext = {
@@ -250,7 +250,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         return 'success';
       });
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 5,
         onRetry: mockOnRetry,
         onStateChange: mockOnStateChange,
@@ -281,7 +281,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         .mockRejectedValueOnce(new Error('Error 3'))
         .mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 10,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.exponential(100, 300), // Max 300ms
@@ -312,7 +312,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 3,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.fixed(150),
@@ -333,7 +333,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
     it('should work with zero fixed delay', async () => {
       const handler = vi.fn().mockRejectedValueOnce(new Error('Error 1')).mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 2,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.fixed(0),
@@ -360,7 +360,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 3,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.jitter(100, 0.5),
@@ -389,7 +389,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         .mockRejectedValueOnce(new Error('Error 3'))
         .mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 5,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.linear(100, 50), // 100, 150, 200, 250, 300
@@ -415,7 +415,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         .mockRejectedValueOnce(new Error('Error 3'))
         .mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 5,
         onRetry: mockOnRetry,
         retryDelay: RetryStrategies.linear(100, 100, 250), // Capped at 250
@@ -447,7 +447,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
         return error.message.includes('Network');
       });
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         isRetryable,
         maxRetries: 3,
         onRetry: mockOnRetry,
@@ -467,7 +467,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
     it('should not retry when isRetryable returns false', async () => {
       const handler = vi.fn().mockRejectedValueOnce(new Error('Permanent failure'));
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         isRetryable: () => false, // Never retry
         maxRetries: 3,
         onRetry: mockOnRetry,
@@ -486,7 +486,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const handler = vi.fn().mockRejectedValue(new Error('Error'));
 
       const controller = new AbortController();
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 5,
         retryDelay: RetryStrategies.exponential(100),
         signal: controller.signal,
@@ -512,7 +512,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const handler = vi.fn().mockRejectedValue(new Error('Error'));
 
       const controller = new AbortController();
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 5,
         retryDelay: RetryStrategies.jitter(100),
         signal: controller.signal,
@@ -541,7 +541,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const stateChanges: EventState[] = [];
       const onStateChange = (state: EventState) => stateChanges.push(state);
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 3,
         onRetry: mockOnRetry,
         onStateChange,
@@ -562,7 +562,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const stateChanges: EventState[] = [];
       const onStateChange = (state: EventState) => stateChanges.push(state);
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         maxRetries: 2,
         onRetry: mockOnRetry,
         onStateChange,
@@ -595,7 +595,7 @@ describe('RetryConditions integration', () => {
 
     const handler = vi.fn().mockRejectedValueOnce(new Error('Error')).mockResolvedValue('success');
 
-    const task = new EventTaskImpl(mockContext, handler, {
+    const task = new EventTask(mockContext, handler, {
       // Using custom retry condition since RetryConditions is empty
       isRetryable: (error) => error.message !== 'Fatal error',
       maxRetries: 2,
@@ -733,7 +733,7 @@ describe('RetryConditions', () => {
 
       const handler = vi.fn().mockRejectedValueOnce(new Error('Rate limit exceeded')).mockResolvedValue('success');
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         isRetryable: RetryConditions.onTransientError,
         maxRetries: 3,
         retryDelay: RetryStrategies.fixed(100),
@@ -752,7 +752,7 @@ describe('RetryConditions', () => {
     it('should not retry on client errors with unlessClientError', async () => {
       const handler = vi.fn().mockRejectedValueOnce(new Error('Bad request: invalid parameters'));
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         isRetryable: RetryConditions.unlessClientError,
         maxRetries: 3,
         retryDelay: RetryStrategies.fixed(100),
@@ -772,7 +772,7 @@ describe('RetryConditions', () => {
       // Retry on database errors OR rate limits
       const customCondition = RetryConditions.or(RetryConditions.onDatabaseError, RetryConditions.onRateLimit);
 
-      const task = new EventTaskImpl(mockContext, handler, {
+      const task = new EventTask(mockContext, handler, {
         isRetryable: customCondition,
         maxRetries: 3,
         retryDelay: RetryStrategies.exponential(100),

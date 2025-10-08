@@ -1,13 +1,13 @@
 import type { EventMap } from '../src/types/types.ts';
 
-import { EventBusImpl } from '../src/core/event-bus.ts';
+import { EventBus } from '../src/index.ts';
 
 interface MyEventMap extends EventMap {
   numberEvent: { value: number };
   testEvent: { data: string };
 }
 
-const bus = new EventBusImpl<MyEventMap>();
+const bus = new EventBus<MyEventMap>();
 
 bus.on('testEvent', async (ctx) => {
   console.log('handler1:', ctx.data.data);
