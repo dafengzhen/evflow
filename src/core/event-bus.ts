@@ -15,6 +15,7 @@ import type {
   MiddlewareWrapper,
   PatternMatchingOptions,
   PlainObject,
+  StringKeyOf,
 } from '../types/types.ts';
 
 import {
@@ -35,7 +36,7 @@ import { EventTask } from './event-task.ts';
 export class EventBus<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>
   implements IEventBus<EM, GC>
 {
-  private readonly globalMiddlewares: MiddlewareWrapper<EM, keyof EM, any, GC>[] = [];
+  private readonly globalMiddlewares: MiddlewareWrapper<EM, StringKeyOf<EM>, any, GC>[] = [];
 
   private readonly handlers = new Map<keyof EM, HandlerWrapper<EM, keyof EM, any, GC>[]>();
 
@@ -66,7 +67,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     this.globalMiddlewares.length = 0;
   }
 
-  async emit<K extends keyof EM, R = unknown>(
+  async emit<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     context: EventContext<EM[K], GC>,
     taskOptions?: EventTaskOptions,
@@ -100,7 +101,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     );
   }
 
-  match<K extends keyof EM, R = unknown>(
+  match<K extends StringKeyOf<EM>, R = unknown>(
     pattern: string,
     handler: EventHandler<EM, K, R, GC>,
     options?: { once?: boolean; priority?: number },
@@ -108,11 +109,11 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     return this.registerHandler(this.patternHandlers, pattern, handler as EventHandler<EM, keyof EM, R, GC>, options);
   }
 
-  off<K extends keyof EM, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void {
+  off<K extends StringKeyOf<EM>, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void {
     this.unregisterHandler(this.handlers, event, handler as EventHandler<EM, keyof EM, R, GC> | undefined);
   }
 
-  on<K extends keyof EM, R = unknown>(
+  on<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     handler: EventHandler<EM, K, R, GC>,
     options?: { once?: boolean; priority?: number },
@@ -120,11 +121,11 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     return this.registerHandler(this.handlers, event, handler as EventHandler<EM, keyof EM, R, GC>, options);
   }
 
-  unmatch<K extends keyof EM, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void {
+  unmatch<K extends StringKeyOf<EM>, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void {
     this.unregisterHandler(this.patternHandlers, pattern, handler as EventHandler<EM, keyof EM, R, GC>);
   }
 
-  use<K extends keyof EM, R = unknown>(
+  use<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     middleware: EventMiddleware<EM, K, R, GC>,
     options?: MiddlewareOptions,
@@ -150,10 +151,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
   }
 
   useGlobalMiddleware<R = unknown>(
-    middleware: EventMiddleware<EM, keyof EM, R, GC>,
+    middleware: EventMiddleware<EM, StringKeyOf<EM>, R, GC>,
     options?: MiddlewareOptions,
   ): () => void {
-    const wrapper: MiddlewareWrapper<EM, keyof EM, R, GC> = {
+    const wrapper: MiddlewareWrapper<EM, StringKeyOf<EM>, R, GC> = {
       filter: options?.filter,
       middleware,
       priority: options?.priority ?? DEFAULT_PRIORITY,
@@ -182,7 +183,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     };
   }
 
-  private cleanupOnceHandlers<K extends keyof EM>(event: K, handlers: HandlerWrapper<EM, K, any, GC>[]): void {
+  private cleanupOnceHandlers<K extends StringKeyOf<EM>>(event: K, handlers: HandlerWrapper<EM, K, any, GC>[]): void {
     const onceHandlers = handlers.filter((h) => h.once).map((h) => h.handler);
     if (onceHandlers.length === 0) {
       return;
@@ -190,14 +191,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
     onceHandlers.forEach((handler) => {
       this.off(event, handler);
-      for (const [pattern, patternHandlers] of this.patternHandlers.entries()) {
-        const filtered = patternHandlers.filter((w) => w.handler !== handler);
-        if (filtered.length === 0) {
-          this.patternHandlers.delete(pattern);
-        } else {
-          this.patternHandlers.set(pattern, filtered);
-        }
-      }
+      this.unmatchAllHandlers(handler);
     });
   }
 
@@ -322,8 +316,8 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     return {
       ...context,
       meta: {
-        eventName: event as string,
-        ...context.meta,
+        eventName: this.normalizeEventName(event),
+        ...context?.meta,
       },
     };
   }
@@ -572,7 +566,11 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     return this.matchWithDoubleWildcard(eventParts, patternParts, eventIndex + 1, patternIndex + 1);
   }
 
-  private async processEvent<K extends keyof EM, R = unknown>(
+  private normalizeEventName(event: number | string | symbol): string {
+    return String(event);
+  }
+
+  private async processEvent<K extends StringKeyOf<EM>, R = unknown>(
     context: EventContext<EM[K], GC>,
     allHandlers: HandlerWrapper<EM, K, any, GC>[],
     eventMiddlewares: MiddlewareWrapper<EM, K, any, GC>[],
@@ -645,6 +643,17 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       void this.safeUninstall(this.installedPlugins[i].plugin);
     }
     this.installedPlugins.length = 0;
+  }
+
+  private unmatchAllHandlers(handler: EventHandler<EM, any, any, GC>): void {
+    for (const [pattern, patternHandlers] of this.patternHandlers.entries()) {
+      const filtered = patternHandlers.filter((w) => w.handler !== handler);
+      if (filtered.length === 0) {
+        this.patternHandlers.delete(pattern);
+      } else {
+        this.patternHandlers.set(pattern, filtered);
+      }
+    }
   }
 
   private unregisterHandler<R>(

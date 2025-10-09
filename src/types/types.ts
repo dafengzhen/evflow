@@ -85,31 +85,31 @@ export interface IEventBus<
   GC extends PlainObject = Record<string, never>,
 > {
   destroy(): void;
-  emit<K extends keyof EM, R = unknown>(
+  emit<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     context: EventContext<EM[K], GC>,
     taskOptions?: EventTaskOptions,
     emitOptions?: EventEmitOptions,
   ): Promise<EventEmitResult<R>[]>;
-  match<K extends keyof EM, R = unknown>(
+  match<K extends StringKeyOf<EM>, R = unknown>(
     pattern: string,
     handler: EventHandler<EM, K, R, GC>,
     options?: { once?: boolean; priority?: number },
   ): () => void;
-  off<K extends keyof EM, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void;
-  on<K extends keyof EM, R = unknown>(
+  off<K extends StringKeyOf<EM>, R = unknown>(event: K, handler?: EventHandler<EM, K, R, GC>): void;
+  on<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     handler: EventHandler<EM, K, R, GC>,
     options?: { once?: boolean; priority?: number },
   ): () => void;
-  unmatch<K extends keyof EM, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void;
-  use<K extends keyof EM, R = unknown>(
+  unmatch<K extends StringKeyOf<EM>, R = unknown>(pattern: string, handler?: EventHandler<EM, K, R, GC>): void;
+  use<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
     middleware: EventMiddleware<EM, K, R, GC>,
     options?: MiddlewareOptions,
   ): () => void;
   useGlobalMiddleware<R = unknown>(
-    middleware: EventMiddleware<EM, keyof EM, R, GC>,
+    middleware: EventMiddleware<EM, StringKeyOf<EM>, R, GC>,
     options?: MiddlewareOptions,
   ): () => void;
   usePlugin(plugin: EventBusPlugin<EM, GC>): () => void;
@@ -152,3 +152,5 @@ export interface PatternMatchingOptions {
 export type PlainObject = Record<string, unknown>;
 
 export type RetryDelayFunction = (attempt: number) => number;
+
+export type StringKeyOf<T> = Extract<keyof T, string>;
