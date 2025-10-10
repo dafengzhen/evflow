@@ -41,6 +41,16 @@ export interface EventError {
   stack?: string;
 }
 
+export interface EventExecutionInfo<R = unknown> {
+  eventName: string;
+  handlerCount: number;
+  hasError: boolean;
+  inProgress: boolean;
+  middlewareCount: number;
+  results: EventEmitResult<R>[];
+  traceId?: string;
+}
+
 export type EventHandler<
   EM extends EventMap = EventMap,
   K extends keyof EM = keyof EM,
@@ -60,7 +70,7 @@ export type EventMiddleware<
   K extends keyof EM = keyof EM,
   R = unknown,
   GC extends PlainObject = Record<string, never>,
-> = (context: EventContext<EM[K], GC>, next: MiddlewareNext<R>) => Promise<R>;
+> = (context: EventContext<EM[K], GC>, next: MiddlewareNext<R>, info: EventExecutionInfo<R>) => Promise<R>;
 
 export type EventState = 'cancelled' | 'failed' | 'pending' | 'retrying' | 'running' | 'succeeded' | 'timeout';
 

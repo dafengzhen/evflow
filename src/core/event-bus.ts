@@ -4,6 +4,7 @@ import type {
   EventContext,
   EventEmitOptions,
   EventEmitResult,
+  EventExecutionInfo,
   EventHandler,
   EventMap,
   EventMiddleware,
@@ -69,7 +70,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
   async emit<K extends StringKeyOf<EM>, R = unknown>(
     event: K,
-    context: EventContext<EM[K], GC>,
+    context?: EventContext<EM[K], GC>,
     taskOptions?: EventTaskOptions,
     emitOptions?: EventEmitOptions,
   ): Promise<EventEmitResult<R>[]> {
@@ -278,10 +279,22 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     return async (): Promise<R> => {
       let middlewareIndex = -1;
 
+      const info: EventExecutionInfo<R> = {
+        eventName: context.meta?.eventName ?? '<unknown>',
+        handlerCount: 1,
+        get hasError() {
+          return this.results.some((r) => r.state === 'failed');
+        },
+        inProgress: true,
+        middlewareCount: middlewares.length,
+        results: [],
+        traceId: context.meta?.traceId as string | undefined,
+      };
+
       const next = async (): Promise<R> => {
         middlewareIndex++;
         if (middlewareIndex < middlewares.length) {
-          return middlewares[middlewareIndex].middleware(context, next);
+          return middlewares[middlewareIndex].middleware(context, next, info);
         }
         return handler(context) as Promise<R>;
       };
@@ -316,14 +329,14 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     });
   }
 
-  private enhanceContext<K extends keyof EM>(event: K, context: EventContext<EM[K], GC>): EventContext<EM[K], GC> {
+  private enhanceContext<K extends keyof EM>(event: K, context?: EventContext<EM[K], GC>): EventContext<EM[K], GC> {
     return {
       ...context,
       meta: {
         eventName: this.normalizeEventName(event),
         ...context?.meta,
       },
-    };
+    } as EventContext<EM[K], GC>;
   }
 
   private async executeHandlers<K extends keyof EM, R>(
@@ -382,9 +395,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     }
   }
 
-  private async executeWithGlobalMiddlewares(
+  private async executeWithGlobalMiddlewares<R = unknown>(
     context: EventContext<any, GC>,
     finalExecutor: () => Promise<void>,
+    info: EventExecutionInfo<R>,
   ): Promise<void> {
     const applicableMiddlewares = this.globalMiddlewares
       .filter((mw) => !mw.filter || mw.filter(context))
@@ -393,9 +407,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     let index = -1;
     const next = async (): Promise<void> => {
       index++;
-      return index < applicableMiddlewares.length
-        ? applicableMiddlewares[index].middleware(context, next as any)
-        : finalExecutor();
+      if (index < applicableMiddlewares.length) {
+        return applicableMiddlewares[index].middleware(context, next, info);
+      }
+      return finalExecutor();
     };
 
     await next();
@@ -603,8 +618,37 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     );
 
     try {
-      await this.executeWithGlobalMiddlewares(context, () =>
-        this.executeHandlers(allHandlers, executeHandler, options.effectiveParallel, options.maxConcurrency, stopFlag),
+      const info: EventExecutionInfo<R> = {
+        eventName: context.meta?.eventName ?? '<unknown>',
+        handlerCount: allHandlers.length,
+        get hasError() {
+          return this.results.some((r) => r.state === 'failed');
+        },
+        inProgress: true,
+        middlewareCount: eventMiddlewares.length,
+        results,
+        traceId: options.traceId,
+      };
+
+      await this.executeWithGlobalMiddlewares(
+        context,
+        async () => {
+          try {
+            await this.executeHandlers(
+              allHandlers,
+              async (handler) => {
+                await executeHandler(handler);
+                info.inProgress = results.length < info.handlerCount;
+              },
+              options.effectiveParallel,
+              options.maxConcurrency,
+              stopFlag,
+            );
+          } finally {
+            info.inProgress = false;
+          }
+        },
+        info,
       );
     } catch (error) {
       const failedResult = this.createFailedResult<R>(error, options.traceId);

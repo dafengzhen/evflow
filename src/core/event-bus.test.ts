@@ -1288,6 +1288,7 @@ describe('EventBus Global Middleware', () => {
           meta: expect.objectContaining({ eventName: 'test.event' }),
         }),
         expect.any(Function),
+        expect.any(Object),
       );
       expect(mockHandler).toHaveBeenCalled();
     });
