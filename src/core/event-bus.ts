@@ -25,7 +25,7 @@ import {
   DEFAULT_PRIORITY,
   DEFAULT_STOP_ON_ERROR,
 } from '../constants.ts';
-import { sortByPriority } from '../utils.ts';
+import { sortByPriorityAsc, sortByPriorityDesc } from '../utils.ts';
 import { EventTask } from './event-task.ts';
 
 /**
@@ -73,32 +73,36 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     taskOptions?: EventTaskOptions,
     emitOptions?: EventEmitOptions,
   ): Promise<EventEmitResult<R>[]> {
-    const enhancedContext = this.enhanceContext(event, context);
-    const allHandlers = this.getAllHandlersForEvent(event);
+    try {
+      const enhancedContext = this.enhanceContext(event, context);
+      const allHandlers = this.getAllHandlersForEvent(event);
 
-    if (allHandlers.length === 0) {
-      this.handleNoHandlersWarning(event, enhancedContext, emitOptions);
-      return [];
+      if (allHandlers.length === 0) {
+        this.handleNoHandlersWarning(event, enhancedContext, emitOptions);
+        return [];
+      }
+
+      const {
+        globalTimeout,
+        maxConcurrency = DEFAULT_MAX_CONCURRENCY,
+        parallel = DEFAULT_PARALLEL,
+        stopOnError = DEFAULT_STOP_ON_ERROR,
+        traceId,
+      } = emitOptions ?? {};
+      const effectiveParallel = stopOnError ? false : parallel;
+      const eventMiddlewares = this.getFilteredMiddlewares(event, enhancedContext);
+
+      return await this.processEvent(
+        enhancedContext,
+        allHandlers,
+        eventMiddlewares,
+        { effectiveParallel, globalTimeout, maxConcurrency, stopOnError, traceId },
+        taskOptions,
+        event,
+      );
+    } catch (error) {
+      return [this.createFailedResult<R>(error, emitOptions?.traceId)];
     }
-
-    const {
-      globalTimeout,
-      maxConcurrency = DEFAULT_MAX_CONCURRENCY,
-      parallel = DEFAULT_PARALLEL,
-      stopOnError = DEFAULT_STOP_ON_ERROR,
-      traceId,
-    } = emitOptions ?? {};
-    const effectiveParallel = stopOnError ? false : parallel;
-    const eventMiddlewares = this.getFilteredMiddlewares(event, enhancedContext);
-
-    return this.processEvent(
-      enhancedContext,
-      allHandlers,
-      eventMiddlewares,
-      { effectiveParallel, globalTimeout, maxConcurrency, stopOnError, traceId },
-      taskOptions,
-      event,
-    );
   }
 
   match<K extends StringKeyOf<EM>, R = unknown>(
@@ -144,7 +148,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
     const middlewares = targetMap.get(eventStr) ?? [];
     middlewares.push(wrapper);
-    middlewares.sort(sortByPriority);
+    middlewares.sort(sortByPriorityDesc);
     targetMap.set(eventStr, middlewares);
 
     return this.createMiddlewareRemover(event, eventStr, middleware);
@@ -161,7 +165,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     };
 
     this.globalMiddlewares.push(wrapper);
-    this.globalMiddlewares.sort(sortByPriority);
+    this.globalMiddlewares.sort(sortByPriorityDesc);
 
     return () => {
       const index = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
@@ -382,7 +386,9 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     context: EventContext<any, GC>,
     finalExecutor: () => Promise<void>,
   ): Promise<void> {
-    const applicableMiddlewares = this.globalMiddlewares.filter((mw) => !mw.filter || mw.filter(context));
+    const applicableMiddlewares = this.globalMiddlewares
+      .filter((mw) => !mw.filter || mw.filter(context))
+      .sort(sortByPriorityAsc);
 
     let index = -1;
     const next = async (): Promise<void> => {
@@ -431,7 +437,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       }
     }
 
-    return matchingHandlers.sort(sortByPriority);
+    return matchingHandlers.sort(sortByPriorityDesc);
   }
 
   private getMatchingPatternMiddlewares(eventName: string): MiddlewareWrapper<EM, any, any, GC>[] {
@@ -443,7 +449,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       }
     }
 
-    return matchingMiddlewares.sort(sortByPriority);
+    return matchingMiddlewares.sort(sortByPriorityDesc);
   }
 
   private handleNoHandlersWarning<K extends keyof EM>(
@@ -596,9 +602,14 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       stopFlag,
     );
 
-    await this.executeWithGlobalMiddlewares(context, () =>
-      this.executeHandlers(allHandlers, executeHandler, options.effectiveParallel, options.maxConcurrency, stopFlag),
-    );
+    try {
+      await this.executeWithGlobalMiddlewares(context, () =>
+        this.executeHandlers(allHandlers, executeHandler, options.effectiveParallel, options.maxConcurrency, stopFlag),
+      );
+    } catch (error) {
+      const failedResult = this.createFailedResult<R>(error, options.traceId);
+      results.push(failedResult);
+    }
 
     if (event) {
       this.cleanupOnceHandlers(event, allHandlers);
@@ -621,7 +632,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
     const handlers = targetMap.get(key) ?? [];
     handlers.push(wrapper);
-    handlers.sort(sortByPriority);
+    handlers.sort(sortByPriorityDesc);
     targetMap.set(key, handlers);
 
     return () => this.unregisterHandler(targetMap, key, handler);

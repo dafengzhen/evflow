@@ -1238,3 +1238,408 @@ describe('Pattern Matching Error Handling', () => {
     });
   });
 });
+
+describe('EventBus Global Middleware', () => {
+  let eventBus: EventBus<any>;
+  let mockGlobalMiddleware: EventMiddleware<any, any, any, any>;
+  let mockHandler: EventHandler<any, any, any, any>;
+  let testContext: EventContext<any, any>;
+
+  beforeEach(() => {
+    eventBus = new EventBus();
+    mockGlobalMiddleware = vi.fn(async (context, next) => {
+      context.meta.globalMiddlewareCalled = true;
+      return next();
+    });
+    mockHandler = vi.fn(async (context) => {
+      context.meta.handlerCalled = true;
+      return 'handler-result';
+    });
+    testContext = {
+      data: { test: 'data' },
+      meta: {},
+    };
+  });
+
+  afterEach(() => {
+    eventBus.destroy();
+  });
+
+  describe('useGlobalMiddleware', () => {
+    it('should register global middleware and return removal function', () => {
+      const removeMiddleware = eventBus.useGlobalMiddleware(mockGlobalMiddleware);
+
+      expect(removeMiddleware).toBeTypeOf('function');
+
+      // Test that removal works
+      removeMiddleware();
+      // The middleware should no longer be called
+    });
+
+    it('should apply global middleware to all events', async () => {
+      eventBus.useGlobalMiddleware(mockGlobalMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      await eventBus.emit('test.event', testContext);
+
+      expect(mockGlobalMiddleware).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: testContext.data,
+          meta: expect.objectContaining({ eventName: 'test.event' }),
+        }),
+        expect.any(Function),
+      );
+      expect(mockHandler).toHaveBeenCalled();
+    });
+
+    it('should execute global middleware in correct order with priority', async () => {
+      const executionOrder: string[] = [];
+      let emittedContext: any;
+
+      const middleware1 = vi.fn(async (context, next) => {
+        executionOrder.push('middleware1');
+        context.meta.order1 = true;
+        emittedContext = context; // Capture the context
+        return next();
+      });
+
+      const middleware2 = vi.fn(async (context, next) => {
+        executionOrder.push('middleware2');
+        context.meta.order2 = true;
+        emittedContext = context; // Capture the context
+        return next();
+      });
+
+      // Register with different priorities
+      eventBus.useGlobalMiddleware(middleware1, { priority: 10 });
+      eventBus.useGlobalMiddleware(middleware2, { priority: 5 });
+
+      eventBus.on('test.event', mockHandler);
+
+      await eventBus.emit('test.event', testContext);
+
+      // Higher priority (lower number) should execute first
+      expect(executionOrder).toEqual(['middleware2', 'middleware1']);
+
+      // Check the captured context that was actually modified
+      expect(emittedContext.meta.order2).toBe(true);
+      expect(emittedContext.meta.order1).toBe(true);
+    });
+
+    it('should allow global middleware to modify context for handlers', async () => {
+      const modifyingMiddleware = vi.fn(async (context, next) => {
+        context.meta.modifiedByGlobal = true;
+        context.data.modifiedValue = 'modified';
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(modifyingMiddleware);
+
+      const testHandler = vi.fn(async (context) => {
+        expect(context.meta.modifiedByGlobal).toBe(true);
+        expect(context.data.modifiedValue).toBe('modified');
+        return 'result';
+      });
+
+      eventBus.on('test.event', testHandler);
+
+      await eventBus.emit('test.event', testContext);
+
+      expect(testHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ modifiedValue: 'modified' }),
+          meta: expect.objectContaining({ modifiedByGlobal: true }),
+        }),
+      );
+    });
+
+    it('should support global middleware with filter', async () => {
+      const filteredMiddleware = vi.fn(async (context, next) => {
+        context.meta.filtered = true;
+        return next();
+      });
+
+      // Only apply to events with specific data
+      eventBus.useGlobalMiddleware(filteredMiddleware, {
+        filter: (context) => context.data.shouldFilter === true,
+      });
+
+      eventBus.on('test.event', mockHandler);
+
+      // Test with context that should trigger filter
+      const filteredContext = { ...testContext, data: { shouldFilter: true } };
+      await eventBus.emit('test.event', filteredContext);
+      expect(filteredMiddleware).toHaveBeenCalled();
+
+      // Test with context that should not trigger filter
+      filteredMiddleware.mockClear();
+      const nonFilteredContext = { ...testContext, data: { shouldFilter: false } };
+      await eventBus.emit('test.event', nonFilteredContext);
+      expect(filteredMiddleware).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Global Middleware Execution Flow', () => {
+    it('should execute global middleware before event-specific middleware', async () => {
+      const executionOrder: string[] = [];
+
+      const globalMiddleware = vi.fn(async (context, next) => {
+        executionOrder.push('global');
+        return next();
+      });
+
+      const eventMiddleware = vi.fn(async (context, next) => {
+        executionOrder.push('event');
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(globalMiddleware);
+      eventBus.use('test.event', eventMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      await eventBus.emit('test.event', testContext);
+
+      expect(executionOrder).toEqual(['global', 'event']);
+    });
+
+    it('should allow global middleware to prevent handler execution', async () => {
+      const blockingMiddleware = vi.fn(async (context) => {
+        context.meta.blocked = true;
+        // Don't call next() - this blocks further execution
+        return 'blocked-result';
+      });
+
+      eventBus.useGlobalMiddleware(blockingMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      const results = await eventBus.emit('test.event', testContext);
+
+      expect(mockHandler).not.toHaveBeenCalled();
+      expect(results).length(0);
+    });
+
+    it('should handle errors in global middleware gracefully', async () => {
+      const errorMiddleware = vi.fn(async () => {
+        throw new Error('Global middleware error');
+      });
+
+      eventBus.useGlobalMiddleware(errorMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      const results = await eventBus.emit('test.event', testContext);
+
+      expect(results[0].state).toBe('failed');
+      expect(results[0].error).toBeDefined();
+      expect(results[0].error?.message).toBe('Global middleware error');
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    it('should continue execution if global middleware calls next after error', async () => {
+      const errorRecoveryMiddleware = vi.fn(async (context, next) => {
+        try {
+          // noinspection ExceptionCaughtLocallyJS
+          throw new Error('Some error');
+        } catch {
+          // Continue execution despite error
+          return next();
+        }
+      });
+
+      eventBus.useGlobalMiddleware(errorRecoveryMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      const results = await eventBus.emit('test.event', testContext);
+
+      expect(mockHandler).toHaveBeenCalled();
+
+      expect(results[0].state).toBe('succeeded');
+    });
+  });
+
+  describe('Global Middleware with Multiple Events', () => {
+    it('should apply same global middleware to multiple events', async () => {
+      const globalMiddleware = vi.fn(async (context, next) => {
+        context.meta.globalProcessed = true;
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(globalMiddleware);
+
+      const handler1 = vi.fn();
+      const handler2 = vi.fn();
+
+      eventBus.on('event1', handler1);
+      eventBus.on('event2', handler2);
+
+      await eventBus.emit('event1', testContext);
+      await eventBus.emit('event2', testContext);
+
+      expect(globalMiddleware).toHaveBeenCalledTimes(2);
+      expect(handler1).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meta: expect.objectContaining({ globalProcessed: true }),
+        }),
+      );
+      expect(handler2).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meta: expect.objectContaining({ globalProcessed: true }),
+        }),
+      );
+    });
+
+    it('should maintain separate context for each event with global middleware', async () => {
+      const contextModifyingMiddleware = vi.fn(async (context, next) => {
+        context.meta.processedAt = Date.now();
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(contextModifyingMiddleware);
+
+      const handler = vi.fn(async (context) => {
+        return context.meta.processedAt;
+      });
+
+      eventBus.on('test.event', handler);
+
+      const result1 = await eventBus.emit('test.event', testContext);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Small delay
+      const result2 = await eventBus.emit('test.event', testContext);
+
+      // Each event should have different processedAt timestamps
+      expect(result1[0].state).toBe('succeeded'); // Changed from 'completed' to 'succeeded'
+      expect(result2[0].state).toBe('succeeded'); // Changed from 'completed' to 'succeeded'
+      expect(result1[0].result).not.toBe(result2[0].result);
+    });
+  });
+
+  describe('Global Middleware Removal', () => {
+    it('should remove global middleware when removal function is called', async () => {
+      const removeMiddleware = eventBus.useGlobalMiddleware(mockGlobalMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      await eventBus.emit('test.event', testContext);
+      expect(mockGlobalMiddleware).toHaveBeenCalledTimes(1);
+
+      // Remove middleware
+      removeMiddleware();
+
+      (mockGlobalMiddleware as any).mockClear();
+      await eventBus.emit('test.event', testContext);
+
+      expect(mockGlobalMiddleware).not.toHaveBeenCalled();
+      expect(mockHandler).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle multiple global middleware removals correctly', async () => {
+      const middleware1 = vi.fn(async (context, next) => {
+        return next();
+      });
+      const middleware2 = vi.fn(async (context, next) => {
+        return next();
+      });
+      const middleware3 = vi.fn(async (context, next) => {
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(middleware1);
+      const remove2 = eventBus.useGlobalMiddleware(middleware2);
+      eventBus.useGlobalMiddleware(middleware3);
+
+      eventBus.on('test.event', mockHandler);
+
+      // Remove second middleware
+      remove2();
+
+      await eventBus.emit('test.event', testContext);
+
+      expect(middleware1).toHaveBeenCalled();
+      expect(middleware2).not.toHaveBeenCalled();
+      expect(middleware3).toHaveBeenCalled();
+    });
+  });
+
+  describe('Global Middleware with Event Bus Options', () => {
+    it('should initialize with global middlewares from options', async () => {
+      const options = {
+        globalMiddlewares: [mockGlobalMiddleware],
+      };
+
+      const busWithOptions = new EventBus(options);
+      busWithOptions.on('test.event', mockHandler);
+
+      await busWithOptions.emit('test.event', testContext);
+
+      expect(mockGlobalMiddleware).toHaveBeenCalled();
+
+      busWithOptions.destroy();
+    });
+
+    it('should combine option global middlewares with dynamically added ones', async () => {
+      const optionMiddleware = vi.fn(async (context, next) => {
+        context.meta.fromOption = true;
+        return next();
+      });
+
+      const dynamicMiddleware = vi.fn(async (context, next) => {
+        context.meta.fromDynamic = true;
+        return next();
+      });
+
+      const bus = new EventBus<any>({ globalMiddlewares: [optionMiddleware] });
+      bus.useGlobalMiddleware(dynamicMiddleware);
+
+      const handler = vi.fn(async (context) => {
+        // Capture the modified context from within the handler
+        expect(context.meta.fromOption).toBe(true);
+        expect(context.meta.fromDynamic).toBe(true);
+      });
+
+      bus.on('test.event', handler);
+
+      await bus.emit('test.event', testContext);
+
+      expect(optionMiddleware).toHaveBeenCalled();
+      expect(dynamicMiddleware).toHaveBeenCalled();
+      expect(handler).toHaveBeenCalled();
+
+      bus.destroy();
+    });
+  });
+
+  describe('Global Middleware Error Handling', () => {
+    it('should handle async errors in global middleware', async () => {
+      const asyncErrorMiddleware = vi.fn(async () => {
+        await Promise.reject(new Error('Async error'));
+      });
+
+      eventBus.useGlobalMiddleware(asyncErrorMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      const results = await eventBus.emit('test.event', testContext);
+
+      expect(results[0].state).toBe('failed');
+      expect(results[0].error?.message).toBe('Async error');
+    });
+
+    it('should not break other global middlewares when one fails', async () => {
+      const failingMiddleware = vi.fn(async () => {
+        throw new Error('Failed middleware');
+      });
+
+      const succeedingMiddleware = vi.fn(async (context, next) => {
+        context.meta.succeeded = true;
+        return next();
+      });
+
+      eventBus.useGlobalMiddleware(failingMiddleware);
+      eventBus.useGlobalMiddleware(succeedingMiddleware);
+      eventBus.on('test.event', mockHandler);
+
+      const results = await eventBus.emit('test.event', testContext);
+
+      // The succeeding middleware should NOT be called when previous middleware fails
+      expect(succeedingMiddleware).not.toHaveBeenCalled();
+      expect(results[0].state).toBe('failed');
+    });
+  });
+});

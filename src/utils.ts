@@ -1,12 +1,20 @@
 import type { EventError } from './types/types.ts';
 
 /**
- * sortByPriority.
+ * sortByPriorityDesc.
  *
  * @param a a
  * @param b b
  */
-export const sortByPriority = <T extends { priority: number }>(a: T, b: T) => b.priority - a.priority;
+export const sortByPriorityDesc = <T extends { priority: number }>(a: T, b: T) => b.priority - a.priority;
+
+/**
+ * sortByPriorityAsc.
+ *
+ * @param a a
+ * @param b b
+ */
+export const sortByPriorityAsc = <T extends { priority: number }>(a: T, b: T) => a.priority - b.priority;
 
 /**
  * RetryStrategies.
