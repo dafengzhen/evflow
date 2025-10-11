@@ -43,7 +43,7 @@ const DEFAULT_MAX_SAMPLES = 500;
 
 const DEFAULT_INCLUDE_FAILED = true;
 
-const INITIAL_STATS: EventStats = Object.freeze({
+const INITIAL_STATS: Readonly<EventStats> = Object.freeze({
   count: 0,
   failure: 0,
   lastSample: undefined,
@@ -54,7 +54,7 @@ const INITIAL_STATS: EventStats = Object.freeze({
   totalTimeMs: 0,
 });
 
-const getCurrentTime = (): number => performance.now?.() ?? Date.now();
+const now = (): number => performance.now?.() ?? Date.now();
 
 /**
  * PerfMonitorPlugin.
@@ -66,191 +66,131 @@ export class PerfMonitorPlugin<
   GC extends PlainObject = PlainObject,
 > implements EventBusPlugin<EM, GC>
 {
-  private readonly eventStats = new Map<string, EventStats>();
-
   private readonly includeFailed: boolean;
 
-  private readonly maxSamplesPerEvent: number;
+  private readonly maxSamples: number;
 
   private readonly onReport?: (metrics: PerfMetrics[]) => void;
 
-  private readonly reportIntervalMs?: number;
+  private removeMiddleware?: () => void;
+
+  private readonly reportInterval?: number;
 
   private reportTimer?: ReturnType<typeof setInterval>;
 
   private readonly samples = new Map<string, number[]>();
 
-  private uninstallMiddlewareFn?: () => void;
+  private readonly stats = new Map<string, EventStats>();
 
   constructor(options: PerfMonitorOptions = {}) {
-    this.maxSamplesPerEvent = options.maxSamplesPerEvent ?? DEFAULT_MAX_SAMPLES;
     this.includeFailed = options.includeFailedInStats ?? DEFAULT_INCLUDE_FAILED;
-    this.reportIntervalMs = options.reportIntervalMs;
+    this.maxSamples = options.maxSamplesPerEvent ?? DEFAULT_MAX_SAMPLES;
+    this.reportInterval = options.reportIntervalMs;
     this.onReport = options.onReport;
   }
 
-  public getMetrics(eventName?: string): PerfMetrics[] {
-    return eventName
-      ? [this.computeMetrics(eventName)]
-      : Array.from(this.getAllEventNames(), (name) => this.computeMetrics(name));
+  getMetrics(eventName?: string): PerfMetrics[] {
+    const names = eventName ? [eventName] : this.getAllEventNames();
+    return names.map((name) => this.computeMetrics(name));
   }
 
-  public getPercentile(eventName: string, percentile: number): null | number {
-    return this.calculatePercentile(eventName, percentile);
-  }
-
-  install(bus: IEventBus<EM, GC>): void {
-    this.uninstallMiddlewareFn = bus.useGlobalMiddleware(this.createMonitoringMiddleware(), { priority: 0 });
-    this.setupReporting();
-  }
-
-  public reset(eventName?: string): void {
-    if (eventName) {
-      this.samples.delete(eventName);
-      this.eventStats.delete(eventName);
-    } else {
-      this.samples.clear();
-      this.eventStats.clear();
-    }
-  }
-
-  public snapshotReport(): {
-    metrics: PerfMetrics[];
-    percentiles: Record<string, { p50: null | number; p95: null | number; p99: null | number }>;
-  } {
-    const metrics = this.getMetrics();
-    const percentiles = Object.create(null);
-
-    for (const metric of metrics) {
-      percentiles[metric.eventName] = {
-        p50: this.calculatePercentile(metric.eventName, 50),
-        p95: this.calculatePercentile(metric.eventName, 95),
-        p99: this.calculatePercentile(metric.eventName, 99),
-      };
-    }
-
-    return { metrics, percentiles };
-  }
-
-  uninstall(): void {
-    this.cleanupMiddleware();
-    this.cleanupReporting();
-    this.reset();
-  }
-
-  private calculatePercentile(eventName: string, percentile: number): null | number {
+  getPercentile(eventName: string, percentile: number): null | number {
     const samples = this.samples.get(eventName);
     if (!samples?.length) {
       return null;
     }
-
-    // Use typed array for better performance with large sample sets
-    const sortedSamples = new Float64Array(samples).sort();
-    const index = Math.ceil((percentile / 100) * sortedSamples.length) - 1;
-    const clampedIndex = Math.max(0, Math.min(index, sortedSamples.length - 1));
-
-    return sortedSamples[clampedIndex];
+    const sorted = Float64Array.from(samples).sort();
+    const idx = Math.min(sorted.length - 1, Math.ceil((percentile / 100) * sorted.length) - 1);
+    return sorted[idx];
   }
 
-  private cleanupMiddleware(): void {
-    this.uninstallMiddlewareFn?.();
-    this.uninstallMiddlewareFn = undefined;
+  install(bus: IEventBus<EM, GC>): void {
+    this.removeMiddleware = bus.useGlobalMiddleware(this.monitor(), { priority: 0 });
+    this.startReporting();
   }
 
-  private cleanupReporting(): void {
-    if (this.reportTimer) {
-      clearInterval(this.reportTimer);
-      this.reportTimer = undefined;
+  reset(eventName?: string): void {
+    if (eventName) {
+      this.stats.delete(eventName);
+      this.samples.delete(eventName);
+    } else {
+      this.stats.clear();
+      this.samples.clear();
     }
   }
 
-  private computeMetrics(eventName: string): PerfMetrics {
-    const stats = this.eventStats.get(eventName) ?? { ...INITIAL_STATS };
-    const avgMs = stats.count > 0 ? stats.totalTimeMs / stats.count : null;
-
-    return {
-      eventName,
-      ...stats,
-      avgMs,
-    };
-  }
-
-  private createMonitoringMiddleware(): EventMiddleware<EM, keyof EM, any, GC> {
-    return async (context, next, info) => {
-      const startTime = getCurrentTime();
-      const result = await next();
-      const durationMs = getCurrentTime() - startTime;
-
-      this.processExecutionResults(info, durationMs);
-
-      return result;
-    };
-  }
-
-  private getAllEventNames(): Set<string> {
-    return new Set([...this.eventStats.keys(), ...this.samples.keys()]);
-  }
-
-  private processExecutionResults(info: any, durationMs: number): void {
-    if (!info.results?.length) {
-      return;
+  snapshotReport() {
+    const metrics = this.getMetrics();
+    const percentiles: Record<string, { p50: null | number; p95: null | number; p99: null | number }> = {};
+    for (const m of metrics) {
+      percentiles[m.eventName] = {
+        p50: this.getPercentile(m.eventName, 50),
+        p95: this.getPercentile(m.eventName, 95),
+        p99: this.getPercentile(m.eventName, 99),
+      };
     }
-
-    for (const res of info.results) {
-      const succeeded = !res.error;
-      const errorMessage = res.error?.message;
-      this.recordSample(info.eventName, durationMs, succeeded, errorMessage);
-    }
+    return { metrics, percentiles };
   }
 
-  private recordSample(eventName: string, durationMs: number, succeeded: boolean, errorMessage?: string): void {
-    this.updateEventStats(eventName, durationMs, succeeded, errorMessage);
-
-    if (succeeded || this.includeFailed) {
-      this.storeSampleData(eventName, durationMs);
-    }
+  uninstall(): void {
+    this.removeMiddleware?.();
+    this.stopReporting();
+    this.reset();
   }
 
-  private setupReporting(): void {
-    if (!this.reportIntervalMs || !this.onReport) {
-      return;
-    }
+  private computeMetrics(event: string): PerfMetrics {
+    const s = this.stats.get(event) ?? INITIAL_STATS;
+    const avgMs = s.samplesCounted > 0 ? s.totalTimeMs / s.samplesCounted : null;
+    return { eventName: event, ...s, avgMs };
+  }
 
-    this.reportTimer = setInterval(() => {
-      try {
-        const snapshot = this.snapshotReport();
-        this.onReport?.(snapshot.metrics);
-      } catch (error) {
-        console.error('[PerfMonitorPlugin] Report error:', error);
+  private getAllEventNames(): string[] {
+    const names = new Set([...this.samples.keys(), ...this.stats.keys()]);
+    return Array.from(names);
+  }
+
+  private monitor(): EventMiddleware<EM, keyof EM, any, GC> {
+    return async (ctx, next, info) => {
+      const start = now();
+      await next();
+      const durationMs = now() - start;
+
+      if (!info?.results?.length) {
+        return;
       }
-    }, this.reportIntervalMs);
+
+      for (const result of info.results) {
+        const succeeded = !result.error;
+        const errorMessage = result.error?.message;
+
+        this.record(info.eventName, durationMs, succeeded, errorMessage);
+      }
+    };
   }
 
-  private storeSampleData(eventName: string, durationMs: number): void {
-    let eventSamples = this.samples.get(eventName);
+  private monitor2(): EventMiddleware<EM, keyof EM, any, GC> {
+    return async (ctx, next, info) => {
+      const start = now();
+      let succeeded = true;
+      let errorMessage: string | undefined;
 
-    if (!eventSamples) {
-      eventSamples = [];
-      this.samples.set(eventName, eventSamples);
-    }
-
-    eventSamples.push(durationMs);
-
-    // Maintain sample size limit efficiently
-    if (eventSamples.length > this.maxSamplesPerEvent) {
-      eventSamples.shift(); // Remove oldest sample
-    }
+      try {
+        return await next();
+      } catch (err) {
+        succeeded = false;
+        errorMessage = (err as Error).message;
+        throw err;
+      } finally {
+        const duration = now() - start;
+        this.record(info.eventName, duration, succeeded, errorMessage);
+      }
+    };
   }
 
-  private updateEventStats(eventName: string, durationMs: number, succeeded: boolean, errorMessage?: string): void {
-    let stats = this.eventStats.get(eventName);
+  private record(event: string, durationMs: number, succeeded: boolean, errorMessage?: string): void {
+    const stats = this.stats.get(event) ?? { ...INITIAL_STATS };
+    this.stats.set(event, stats);
 
-    if (!stats) {
-      stats = { ...INITIAL_STATS };
-      this.eventStats.set(eventName, stats);
-    }
-
-    // Update basic counters
     stats.count++;
     if (succeeded) {
       stats.success++;
@@ -258,27 +198,45 @@ export class PerfMonitorPlugin<
       stats.failure++;
     }
 
-    // Update timing statistics for relevant samples
     if (succeeded || this.includeFailed) {
       stats.totalTimeMs += durationMs;
       stats.samplesCounted++;
+      stats.minMs = stats.minMs === null ? durationMs : Math.min(stats.minMs, durationMs);
+      stats.maxMs = stats.maxMs === null ? durationMs : Math.max(stats.maxMs, durationMs);
 
-      // Update min/max efficiently
-      if (stats.minMs === null || durationMs < stats.minMs) {
-        stats.minMs = durationMs;
-      }
-      if (stats.maxMs === null || durationMs > stats.maxMs) {
-        stats.maxMs = durationMs;
-      }
+      this.recordSample(event, durationMs);
     }
 
-    // Store last sample
-    stats.lastSample = {
-      durationMs,
-      errorMessage,
-      eventName,
-      succeeded,
-      timestamp: Date.now(),
-    };
+    stats.lastSample = { durationMs, errorMessage, eventName: event, succeeded, timestamp: Date.now() };
+  }
+
+  private recordSample(event: string, durationMs: number): void {
+    const samples = this.samples.get(event) ?? [];
+    samples.push(durationMs);
+    if (samples.length > this.maxSamples) {
+      samples.splice(0, samples.length - this.maxSamples);
+    }
+    this.samples.set(event, samples);
+  }
+
+  private startReporting(): void {
+    if (!this.reportInterval || !this.onReport) {
+      return;
+    }
+    this.reportTimer = setInterval(() => {
+      try {
+        const report = this.snapshotReport();
+        this.onReport?.(report.metrics);
+      } catch (err) {
+        console.error('[PerfMonitorPlugin] Report error:', err);
+      }
+    }, this.reportInterval);
+  }
+
+  private stopReporting(): void {
+    if (this.reportTimer) {
+      clearInterval(this.reportTimer);
+      this.reportTimer = undefined;
+    }
   }
 }

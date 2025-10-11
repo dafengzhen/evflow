@@ -1,5 +1,4 @@
-import { EventBus } from '../src/index.ts';
-import { PerfMonitorPlugin } from '../src/plugins/perf-monitor-plugin.ts';
+import { EventBus, PerfMonitorPlugin } from '../src/index.ts';
 
 const bus = new EventBus<any>();
 const perfPlugin = new PerfMonitorPlugin({ reportIntervalMs: 5000 });
