@@ -144,12 +144,14 @@ export type MiddlewareNext<R = unknown> = () => Promise<R>;
 export interface MiddlewareOptions {
   filter?: (context: EventContext) => boolean;
   priority?: number;
+  throwOnEventError?: boolean;
 }
 
 export interface MiddlewareWrapper<EM extends EventMap, K extends keyof EM, R, GC extends PlainObject> {
   filter?: (context: EventContext<EM[K], GC>) => boolean;
   middleware: EventMiddleware<EM, K, R, GC>;
   priority: number;
+  throwOnEventError?: boolean;
 }
 
 export interface PatternMatchingOptions {

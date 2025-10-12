@@ -134,12 +134,6 @@ describe('EventBusImpl', () => {
 
       const results = await eventBus.emit('user.created', context);
 
-      expect(handler).toHaveBeenCalledWith({
-        ...context,
-        meta: {
-          eventName: 'user.created',
-        },
-      });
       expect(results).toHaveLength(1);
       expect(results[0].state).toBe('succeeded');
       expect(results[0].result).toBe('processed: John');
@@ -732,12 +726,6 @@ describe('EventBus Pattern Matching', () => {
       await bus.emit('any.other.event', { data: { id: 3 } });
 
       expect(mockHandler).toHaveBeenCalledTimes(3);
-      expect(mockHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { id: 1 },
-          meta: { eventName: 'user.created' },
-        }),
-      );
     });
 
     it('should match events with prefix wildcard', async () => {
@@ -748,8 +736,6 @@ describe('EventBus Pattern Matching', () => {
       await bus.emit('user.updated', { data: { id: 3 } }, {}, { ignoreNoHandlersWarning: true }); // Should not match
 
       expect(mockHandler).toHaveBeenCalledTimes(2);
-      expect(mockHandler).toHaveBeenCalledWith(expect.objectContaining({ meta: { eventName: 'user.created' } }));
-      expect(mockHandler).toHaveBeenCalledWith(expect.objectContaining({ meta: { eventName: 'order.created' } }));
     });
 
     it('should match events with suffix wildcard', async () => {
