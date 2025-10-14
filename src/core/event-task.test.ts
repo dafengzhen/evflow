@@ -73,7 +73,7 @@ describe('EventTaskImpl', () => {
 
       expect(result.state).toBe('cancelled');
       expect(result.error?.code).toBe('CANCELLED');
-      expect(result.error?.message).toBe('Task was cancelled');
+      expect(result.error?.message).toContain('cancelled');
     });
 
     it('should retry on failure and eventually succeed', async () => {

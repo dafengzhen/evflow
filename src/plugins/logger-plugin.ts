@@ -19,32 +19,19 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
 
     const removeGlobalMiddleware = bus.useGlobalMiddleware(async (context, next) => {
       const eventName = context.meta?.eventName ?? 'unknown';
-      const startTime = performance.now();
+      const start = performance.now();
 
-      this.log('log', `[EventBus] ▶ Event started: ${eventName}`, {
+      this.log('log', `[EventBus] ▶ ${eventName} started`, {
         data: context.data,
-        timestamp: new Date().toISOString(),
+        time: new Date().toISOString(),
       });
 
       try {
         const result = await next();
-        const duration = (performance.now() - startTime).toFixed(2);
-
-        this.log('log', `[EventBus] ✔ Event completed: ${eventName}`, {
-          duration: `${duration}ms`,
-          timestamp: new Date().toISOString(),
-        });
-
+        this.logEventDone('✔', eventName, start);
         return result;
       } catch (error) {
-        const duration = (performance.now() - startTime).toFixed(2);
-
-        this.log('error', `[EventBus] ✖ Event failed: ${eventName}`, {
-          duration: `${duration}ms`,
-          error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
-          timestamp: new Date().toISOString(),
-        });
-
+        this.logEventFail('✖', eventName, start, error);
         throw error;
       }
     });
@@ -52,11 +39,11 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
 
     const removeMatchHandler = bus.match('*', (context) => {
       const eventName = context.meta?.eventName ?? 'unknown';
-      this.log('debug', `[EventBus] 🔔 Event emitted: ${eventName}`, {
+      this.log('debug', `[EventBus] 🔔 ${eventName} emitted`, {
         data: context.data,
-        globalContext: context.global,
+        global: context.global,
         meta: context.meta,
-        timestamp: new Date().toISOString(),
+        time: new Date().toISOString(),
       });
     });
     this.cleanupFns.add(removeMatchHandler);
@@ -73,23 +60,41 @@ export class LoggerPlugin<EM extends EventMap, GC extends PlainObject> implement
     for (const fn of this.cleanupFns) {
       try {
         fn();
-      } catch (err) {
-        this.log('warn', '[EventBus] LoggerPlugin cleanup error', err);
+      } catch (error) {
+        this.log('warn', '[EventBus] LoggerPlugin cleanup error', error);
       }
     }
     this.cleanupFns.clear();
   }
 
   private log(level: keyof Console, message: string, data?: any): void {
-    const loggerFn: any = this.logger[level] ?? this.logger.log;
+    const fn: any = this.logger[level] ?? this.logger.log;
     try {
       if (data) {
-        loggerFn.call(this.logger, message, data);
+        fn.call(this.logger, message, data);
       } else {
-        loggerFn.call(this.logger, message);
+        fn.call(this.logger, message);
       }
     } catch {
-      console.log(`[LoggerPlugin: ${level}] ${message}`, data);
+      console.log(`[LoggerPlugin:${level}] ${message}`, data);
     }
+  }
+
+  private logEventDone(icon: string, eventName: string, start: number): void {
+    const duration = (performance.now() - start).toFixed(2);
+    this.log('log', `[EventBus] ${icon} ${eventName} completed`, {
+      duration: `${duration}ms`,
+      time: new Date().toISOString(),
+    });
+  }
+
+  private logEventFail(icon: string, eventName: string, start: number, error: unknown): void {
+    const duration = (performance.now() - start).toFixed(2);
+    const err = error instanceof Error ? { message: error.message, stack: error.stack } : error;
+    this.log('error', `[EventBus] ${icon} ${eventName} failed`, {
+      duration: `${duration}ms`,
+      error: err,
+      time: new Date().toISOString(),
+    });
   }
 }

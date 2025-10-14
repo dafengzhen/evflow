@@ -39,17 +39,17 @@ import { EventTask } from './event-task.ts';
 export class EventBus<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>
   implements IEventBus<EM, GC>
 {
-  private readonly globalMiddlewares: Array<MiddlewareWrapper<EM, StringKeyOf<EM>, any, GC>> = [];
+  private readonly globalMiddlewares: MiddlewareWrapper<EM, StringKeyOf<EM>, any, GC>[] = [];
 
-  private readonly handlers = new Map<keyof EM, Array<HandlerWrapper<EM, keyof EM, any, GC>>>();
+  private readonly handlers = new Map<keyof EM, HandlerWrapper<EM, keyof EM, any, GC>[]>();
 
-  private readonly installedPlugins: Array<InstalledPlugin<EM, GC>> = [];
+  private readonly installedPlugins: InstalledPlugin<EM, GC>[] = [];
 
-  private readonly middlewares = new Map<keyof EM, Array<MiddlewareWrapper<EM, any, any, GC>>>();
+  private readonly middlewares = new Map<keyof EM, MiddlewareWrapper<EM, any, any, GC>[]>();
 
-  private readonly patternHandlers = new Map<string, Array<HandlerWrapper<EM, keyof EM, any, GC>>>();
+  private readonly patternHandlers = new Map<string, HandlerWrapper<EM, keyof EM, any, GC>[]>();
 
-  private readonly patternMiddlewares = new Map<string, Array<MiddlewareWrapper<EM, any, any, GC>>>();
+  private readonly patternMiddlewares = new Map<string, MiddlewareWrapper<EM, any, any, GC>[]>();
 
   private readonly patternOptions: Required<PatternMatchingOptions>;
 
@@ -143,14 +143,16 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     };
 
     const eventStr = String(event);
-    const targetMap =
-      this.patternOptions.wildcard && eventStr.includes(this.patternOptions.wildcard)
-        ? this.patternMiddlewares
-        : this.middlewares;
+    const targetMap = this.isPatternKey(eventStr) ? this.patternMiddlewares : this.middlewares;
+    this.addToMapSorted(
+      targetMap,
+      eventStr,
+      wrapper as MiddlewareWrapper<any, any, any, any>,
+      sortByPriorityDesc,
+      (w) => (w as any).middleware,
+    );
 
-    this.addToMapSorted(targetMap, eventStr as any, wrapper as any, sortByPriorityDesc);
-
-    return this.createMiddlewareRemover(event, eventStr, middleware);
+    return this.createMiddlewareRemover(eventStr, middleware);
   }
 
   useGlobalMiddleware<R = unknown>(
@@ -194,9 +196,8 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     comparator: (a: T, b: T) => number,
     identity?: (w: T) => unknown,
   ): void {
-    let arr = map.get(key);
-    if (!arr) {
-      arr = [];
+    const arr = map.get(key) ?? [];
+    if (!map.has(key)) {
       map.set(key, arr);
     }
 
@@ -211,18 +212,14 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     arr.sort(comparator);
   }
 
-  private cleanupOnceHandlers<K extends StringKeyOf<EM>>(
-    event: K,
-    handlers: Array<HandlerWrapper<EM, K, any, GC>>,
-  ): void {
+  private cleanupOnceHandlers<K extends StringKeyOf<EM>>(event: K, handlers: HandlerWrapper<EM, K, any, GC>[]): void {
     const onceHandlers = handlers.filter((h) => h.once);
-    if (onceHandlers.length === 0) {
+    if (!onceHandlers.length) {
       return;
     }
-
-    for (const handlerWrapper of onceHandlers) {
-      this.off(event, handlerWrapper.handler);
-      this.unmatchAllHandlers(handlerWrapper.handler);
+    for (const hw of onceHandlers) {
+      this.off(event, hw.handler as EventHandler<EM, K, any, GC>);
+      this.unmatchAllHandlers(hw.handler);
     }
   }
 
@@ -237,10 +234,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
   private createHandlerExecutor<R>(
     context: EventContext<any, GC>,
-    eventMiddlewares: Array<MiddlewareWrapper<EM, any, any, GC>>,
+    eventMiddlewares: MiddlewareWrapper<EM, any, any, GC>[],
     options: { globalTimeout?: number; stopOnError: boolean; traceId?: string },
     taskOptions?: EventTaskOptions,
-    results?: Array<EventEmitResult<R>>,
+    results?: EventEmitResult<R>[],
     stopFlag?: { value: boolean },
   ) {
     return async (handlerWrapper: HandlerWrapper<EM, any, R, GC>): Promise<void> => {
@@ -249,69 +246,51 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       }
 
       try {
-        const wrappedHandler = this.createWrappedHandler(handlerWrapper.handler, eventMiddlewares, context);
+        const wrappedHandler = this.createWrappedHandler(handlerWrapper.handler, eventMiddlewares as any, context);
         const task = new EventTask<R>(context, wrappedHandler, taskOptions);
         const result = await this.executeWithTimeout(task.execute(), options.globalTimeout);
 
         if (options.traceId) {
           result.traceId = options.traceId;
         }
-
         results?.push(result);
 
         if (options.stopOnError && result.error) {
           stopFlag!.value = true;
         }
-
         if (result.error) {
           await this.handleEventResultError(result, eventMiddlewares, context);
         }
       } catch (err) {
         const failed = this.createFailedResult<R>(err, options.traceId);
         results?.push(failed);
-
         if (options.stopOnError) {
           stopFlag!.value = true;
         }
-
         await this.handleEventResultError(failed, eventMiddlewares, context);
       }
     };
   }
 
-  private createMiddlewareRemover<K extends keyof EM>(
-    event: K,
-    eventStr: string,
-    middleware: EventMiddleware<EM, K, any, GC>,
-  ): () => void {
+  private createMiddlewareRemover(eventKey: string, middleware: EventMiddleware<EM, any, any, GC>): () => void {
     return () => {
-      for (const map of [this.middlewares, this.patternMiddlewares]) {
-        this.removeFromMapByIdentity(
-          map as Map<any, Array<MiddlewareWrapper<EM, any, any, GC>>>,
-          eventStr,
-          (w) => w.middleware === middleware,
-        );
-        this.removeFromMapByIdentity(
-          map as Map<any, Array<MiddlewareWrapper<EM, any, any, GC>>>,
-          event,
-          (w) => w.middleware === middleware,
-        );
-      }
+      [this.middlewares, this.patternMiddlewares].forEach((m) =>
+        this.removeFromMapByIdentity(m as Map<any, any[]>, eventKey, (w) => w.middleware === middleware),
+      );
     };
   }
 
   private createWrappedHandler<K extends keyof EM, R>(
     handler: EventHandler<EM, K, R, GC>,
-    middlewares: Array<MiddlewareWrapper<EM, K, R, GC>>,
+    middlewares: MiddlewareWrapper<EM, K, R, GC>[],
     context: EventContext<EM[K], GC>,
   ): () => Promise<R> {
     return async (): Promise<R> => {
       let idx = -1;
-
       const info: EventExecutionInfo<R> = {
         eventName: context.meta?.eventName ?? '<unknown>',
         handlerCount: 1,
-        get hasError(): boolean {
+        get hasError() {
           return this.results.some((r) => r.state === 'failed');
         },
         inProgress: true,
@@ -332,34 +311,25 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     };
   }
 
-  private deduplicateHandlers<K extends keyof EM, R>(
-    handlers: Array<HandlerWrapper<EM, K, R, GC>>,
-  ): Array<HandlerWrapper<EM, K, R, GC>> {
-    const seen = new Set<EventHandler<EM, K, R, GC>>();
-    const result: Array<HandlerWrapper<EM, K, R, GC>> = [];
-
-    for (const handler of handlers) {
-      if (!seen.has(handler.handler)) {
-        seen.add(handler.handler);
-        result.push(handler);
+  private deduplicateByIdentity<T, I>(arr: T[], identity: (t: T) => I): T[] {
+    const seen = new Set<I>();
+    const out: T[] = [];
+    for (const item of arr) {
+      const id = identity(item);
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(item);
       }
     }
-    return result;
+    return out;
   }
 
-  private deduplicateMiddlewares<K extends keyof EM, R>(
-    middlewares: Array<MiddlewareWrapper<EM, K, R, GC>>,
-  ): Array<MiddlewareWrapper<EM, K, R, GC>> {
-    const seen = new Set<EventMiddleware<EM, K, R, GC>>();
-    const result: Array<MiddlewareWrapper<EM, K, R, GC>> = [];
+  private deduplicateHandlers<K extends keyof EM, R>(handlers: HandlerWrapper<EM, K, R, GC>[]) {
+    return this.deduplicateByIdentity(handlers, (h) => h.handler) as HandlerWrapper<EM, K, R, GC>[];
+  }
 
-    for (const middleware of middlewares) {
-      if (!seen.has(middleware.middleware)) {
-        seen.add(middleware.middleware);
-        result.push(middleware);
-      }
-    }
-    return result;
+  private deduplicateMiddlewares<K extends keyof EM, R>(middlewares: MiddlewareWrapper<EM, K, R, GC>[]) {
+    return this.deduplicateByIdentity(middlewares, (m) => m.middleware) as MiddlewareWrapper<EM, K, R, GC>[];
   }
 
   private enhanceContext<K extends keyof EM>(event: K, context?: EventContext<EM[K], GC>): EventContext<EM[K], GC> {
@@ -373,7 +343,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
   }
 
   private async executeHandlers<K extends keyof EM, R>(
-    handlers: Array<HandlerWrapper<EM, K, R, GC>>,
+    handlers: HandlerWrapper<EM, K, R, GC>[],
     executeHandler: (h: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
     parallel: boolean,
     maxConcurrency: number,
@@ -385,48 +355,47 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
   }
 
   private async executeParallel<K extends keyof EM, R>(
-    handlers: Array<HandlerWrapper<EM, K, R, GC>>,
+    handlers: HandlerWrapper<EM, K, R, GC>[],
     executeHandler: (h: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
     maxConcurrency: number,
     stopFlag: { value: boolean },
   ): Promise<void> {
-    const executing = new Set<Promise<void>>();
+    const running = new Set<Promise<void>>();
 
-    for (const handler of handlers) {
+    for (const h of handlers) {
       if (stopFlag.value) {
         break;
       }
 
-      while (executing.size >= maxConcurrency) {
+      while (running.size >= maxConcurrency) {
         if (stopFlag.value) {
           break;
         }
-        await Promise.race(executing);
+        await Promise.race(running);
       }
-
       if (stopFlag.value) {
         break;
       }
 
-      const promise = executeHandler(handler);
-      const cleanup = () => executing.delete(promise);
-      promise.then(cleanup, cleanup);
-      executing.add(promise);
+      const p = executeHandler(h);
+      const remove = () => running.delete(p);
+      p.then(remove, remove);
+      running.add(p);
     }
 
-    await Promise.all(executing);
+    await Promise.all(Array.from(running));
   }
 
   private async executeSequential<K extends keyof EM, R>(
-    handlers: Array<HandlerWrapper<EM, K, R, GC>>,
+    handlers: HandlerWrapper<EM, K, R, GC>[],
     executeHandler: (h: HandlerWrapper<EM, K, R, GC>) => Promise<void>,
     stopFlag: { value: boolean },
   ): Promise<void> {
-    for (const handler of handlers) {
+    for (const h of handlers) {
       if (stopFlag.value) {
         break;
       }
-      await executeHandler(handler);
+      await executeHandler(h);
     }
   }
 
@@ -453,53 +422,47 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     if (!timeout) {
       return promise;
     }
-
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`Operation timed out after ${timeout}ms`)), timeout);
       promise.finally(() => clearTimeout(timer)).then(resolve, reject);
     });
   }
 
-  private getAllHandlersForEvent<K extends keyof EM>(event: K): Array<HandlerWrapper<EM, K, any, GC>> {
-    const exactHandlers = (this.handlers.get(event) ?? []) as Array<HandlerWrapper<EM, K, any, GC>>;
+  private getAllHandlersForEvent<K extends keyof EM>(event: K) {
+    const exact = (this.handlers.get(event) ?? []) as HandlerWrapper<EM, K, any, GC>[];
     const pattern = this.getMatchingFromMap(this.patternHandlers, String(event));
-    return this.deduplicateHandlers([...exactHandlers, ...pattern]);
+    return this.deduplicateHandlers([...exact, ...pattern]);
   }
 
-  private getFilteredMiddlewares<K extends keyof EM>(
-    event: K,
-    context: EventContext<EM[K], GC>,
-  ): Array<MiddlewareWrapper<EM, K, any, GC>> {
-    const exact = (this.middlewares.get(event) ?? []) as Array<MiddlewareWrapper<EM, K, any, GC>>;
+  private getFilteredMiddlewares<K extends keyof EM>(event: K, context: EventContext<EM[K], GC>) {
+    const exact = (this.middlewares.get(event) ?? []) as MiddlewareWrapper<EM, K, any, GC>[];
     const patterns = this.getMatchingFromMap(this.patternMiddlewares, String(event));
     const combined = [...exact, ...patterns];
     return this.deduplicateMiddlewares(combined).filter((mw) => !mw.filter || mw.filter(context));
   }
 
-  private getMatchingFromMap<T>(map: Map<string, T[]>, eventName: string): T[] {
+  private getMatchingFromMap<T extends { priority?: number }>(map: Map<string, T[]>, eventName: string): T[] {
     const out: T[] = [];
-
     for (const [pattern, list] of map.entries()) {
       if (this.isPatternMatch(eventName, pattern)) {
         out.push(...list);
       }
     }
-
     out.sort((a: any, b: any) => (b.priority ?? 0) - (a.priority ?? 0));
     return out;
   }
 
   private async handleEventResultError<R>(
     result: EventEmitResult<R>,
-    eventMiddlewares: Array<MiddlewareWrapper<EM, any, any, GC>>,
+    eventMiddlewares: MiddlewareWrapper<EM, any, any, GC>[],
     context: EventContext<any, GC>,
   ): Promise<void> {
     const error = result.error?.error instanceof Error ? result.error.error : new Error(result.error?.message);
     const applicable = this.globalMiddlewares.filter((mw) => !mw.filter || mw.filter(context)).sort(sortByPriorityAsc);
 
-    const allMiddlewares = [...eventMiddlewares, ...applicable];
-    for (const middleware of allMiddlewares) {
-      if (middleware.throwOnEventError) {
+    const all = [...eventMiddlewares, ...applicable];
+    for (const mw of all) {
+      if (mw.throwOnEventError) {
         throw error;
       }
     }
@@ -509,13 +472,13 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     event: K,
     context: EventContext<EM[K], GC>,
     emitOptions?: EventEmitOptions,
-  ): void {
+  ) {
     if (!emitOptions?.ignoreNoHandlersWarning) {
       console.trace(`[EventBus] No handlers found for event "${String(event)}".`, 'Context:', context);
     }
   }
 
-  private initialize(options?: EventBusOptions<EM, GC>): void {
+  private initialize(options?: EventBusOptions<EM, GC>) {
     if (options?.globalMiddlewares) {
       this.globalMiddlewares.push(
         ...options.globalMiddlewares.map((mw) => ({
@@ -528,6 +491,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     }
 
     options?.plugins?.forEach((p) => this.usePlugin(p));
+  }
+
+  private isPatternKey(key: string): boolean {
+    return !!(this.patternOptions.wildcard && key.includes(this.patternOptions.wildcard));
   }
 
   private isPatternMatch(eventName: string, pattern: string): boolean {
@@ -546,28 +513,25 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     if (matchMultiple && patternParts.some((p) => wildcard && p === wildcard + wildcard)) {
       return this.matchWithDoubleWildcard(eventParts, patternParts);
     }
-
     return this.matchSimpleSegments(eventParts, patternParts);
   }
 
   private matchSimpleSegments(eventParts: string[], patternParts: string[]): boolean {
     const { wildcard } = this.patternOptions;
-
     if (eventParts.length !== patternParts.length) {
       return false;
     }
 
     for (let i = 0; i < patternParts.length; i++) {
-      const patternPart = patternParts[i];
-      const eventPart = eventParts[i];
-
-      if (patternPart === wildcard) {
-        if (COMMON_WILDCARD_CHARS.has(eventPart)) {
+      const pp = patternParts[i];
+      const ep = eventParts[i];
+      if (pp === wildcard) {
+        if (COMMON_WILDCARD_CHARS.has(ep)) {
           return false;
         }
         continue;
       }
-      if (patternPart !== eventPart) {
+      if (pp !== ep) {
         return false;
       }
     }
@@ -586,23 +550,18 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     if (eventIndex === eventParts.length && patternIndex === patternParts.length) {
       return true;
     }
-
     if (patternIndex === patternParts.length) {
       return false;
     }
 
-    const currentPattern = patternParts[patternIndex];
-
-    if (currentPattern === doubleWildcard) {
-      const hasMorePatterns = patternIndex < patternParts.length - 1;
-
-      if (!hasMorePatterns) {
+    const curPattern = patternParts[patternIndex];
+    if (curPattern === doubleWildcard) {
+      const hasMore = patternIndex < patternParts.length - 1;
+      if (!hasMore) {
         return true;
       }
-
-      const startIndex = allowZeroLengthDoubleWildcard ? eventIndex : eventIndex + 1;
-
-      for (let i = startIndex; i <= eventParts.length; i++) {
+      const start = allowZeroLengthDoubleWildcard ? eventIndex : eventIndex + 1;
+      for (let i = start; i <= eventParts.length; i++) {
         if (this.matchWithDoubleWildcard(eventParts, patternParts, i, patternIndex + 1)) {
           return true;
         }
@@ -613,14 +572,13 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     if (eventIndex >= eventParts.length) {
       return false;
     }
+    const curEvent = eventParts[eventIndex];
 
-    const currentEvent = eventParts[eventIndex];
-
-    if (currentPattern === wildcard) {
-      if (COMMON_WILDCARD_CHARS.has(currentEvent)) {
+    if (curPattern === wildcard) {
+      if (COMMON_WILDCARD_CHARS.has(curEvent)) {
         return false;
       }
-    } else if (currentPattern !== currentEvent) {
+    } else if (curPattern !== curEvent) {
       return false;
     }
 
@@ -633,8 +591,8 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
 
   private async processEvent<K extends StringKeyOf<EM>, R = unknown>(
     context: EventContext<EM[K], GC>,
-    allHandlers: Array<HandlerWrapper<EM, K, any, GC>>,
-    eventMiddlewares: Array<MiddlewareWrapper<EM, K, any, GC>>,
+    allHandlers: HandlerWrapper<EM, K, any, GC>[],
+    eventMiddlewares: MiddlewareWrapper<EM, K, any, GC>[],
     options: {
       effectiveParallel: boolean;
       globalTimeout?: number;
@@ -644,8 +602,8 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     },
     taskOptions?: EventTaskOptions,
     event?: K,
-  ): Promise<Array<EventEmitResult<R>>> {
-    const results: Array<EventEmitResult<R>> = [];
+  ): Promise<EventEmitResult<R>[]> {
+    const results: EventEmitResult<R>[] = [];
     const stopFlag = { value: false };
 
     const executeHandler = this.createHandlerExecutor<R>(
@@ -661,7 +619,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       const info: EventExecutionInfo<R> = {
         eventName: context.meta?.eventName ?? '<unknown>',
         handlerCount: allHandlers.length,
-        get hasError(): boolean {
+        get hasError() {
           return this.results.some((r) => r.state === 'failed');
         },
         inProgress: true,
@@ -702,7 +660,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
   }
 
   private registerHandler<R>(
-    targetMap: Map<keyof EM | string, Array<HandlerWrapper<EM, keyof EM, R, GC>>>,
+    targetMap: Map<keyof EM | string, HandlerWrapper<EM, keyof EM, R, GC>[]>,
     key: keyof EM | string,
     handler: EventHandler<EM, keyof EM, R, GC>,
     options?: { once?: boolean; priority?: number },
@@ -714,11 +672,11 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
     };
 
     this.addToMapSorted(
-      targetMap as Map<any, HandlerWrapper<EM, keyof EM, R, GC>[]>,
+      targetMap as Map<any, HandlerWrapper<any, any, any, any>[]>,
       key,
       wrapper,
       sortByPriorityDesc,
-      (w) => w.handler,
+      (w) => (w as any).handler,
     );
 
     return () => this.unregisterHandler(targetMap, key, handler);
@@ -729,12 +687,10 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       map.delete(key);
       return;
     }
-
     const arr = map.get(key);
     if (!arr) {
       return;
     }
-
     const filtered = arr.filter((w) => !identity(w));
     if (filtered.length === 0) {
       map.delete(key);
@@ -773,7 +729,7 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
   }
 
   private unregisterHandler<R>(
-    targetMap: Map<keyof EM | string, Array<HandlerWrapper<EM, keyof EM, R, GC>>>,
+    targetMap: Map<keyof EM | string, HandlerWrapper<EM, keyof EM, R, GC>[]>,
     key: keyof EM | string,
     handler?: EventHandler<EM, keyof EM, R, GC>,
   ): void {
@@ -781,11 +737,6 @@ export class EventBus<EM extends EventMap = Record<string, never>, GC extends Pl
       targetMap.delete(key);
       return;
     }
-
-    this.removeFromMapByIdentity(
-      targetMap as Map<any, Array<HandlerWrapper<EM, keyof EM, R, GC>>>,
-      key,
-      (w) => w.handler === handler,
-    );
+    this.removeFromMapByIdentity(targetMap as Map<any, any[]>, key, (w) => w.handler === handler);
   }
 }

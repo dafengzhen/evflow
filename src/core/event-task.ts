@@ -21,12 +21,12 @@ export class EventTask<R = unknown> implements IEventTask<R> {
   ) {}
 
   async execute(): Promise<EventEmitResult<R>> {
-    const { isRetryable, maxRetries = 0, onRetry, onStateChange, retryDelay, signal } = this.options;
+    const { isRetryable, maxRetries = 0, onRetry, onStateChange, retryDelay = 0, signal } = this.options;
 
     let attempt = 0;
     let state: EventState = 'pending';
 
-    const changeState = (newState: EventState) => {
+    const setState = (newState: EventState) => {
       if (state !== newState) {
         state = newState;
         onStateChange?.(state);
@@ -34,65 +34,52 @@ export class EventTask<R = unknown> implements IEventTask<R> {
     };
 
     try {
-      changeState('running');
+      setState('running');
 
       while (true) {
         this.ensureNotCancelled(signal);
 
         try {
           const result = await this.runWithTimeout();
-          changeState('succeeded');
+          setState('succeeded');
           return this.createResult('succeeded', result);
         } catch (error) {
-          this.ensureNotCancelled(signal);
-
           const eventError = this.normalizeError(error);
 
           if (eventError.code === 'CANCELLED') {
-            changeState('cancelled');
+            setState('cancelled');
             return this.createResult('cancelled', undefined, eventError);
           }
 
-          const shouldRetry = attempt < maxRetries && (isRetryable ? isRetryable(eventError) : true);
+          const canRetry = attempt < maxRetries && (isRetryable ? isRetryable(eventError) : true);
 
-          if (!shouldRetry) {
-            changeState('failed');
+          if (!canRetry) {
+            setState('failed');
             return this.createResult('failed', undefined, eventError);
           }
 
           attempt++;
-          changeState('retrying');
+          setState('retrying');
           onRetry?.(attempt, eventError);
 
-          const delay = typeof retryDelay === 'function' ? retryDelay(attempt) : (retryDelay ?? 0);
+          const delay = typeof retryDelay === 'function' ? retryDelay(attempt) : retryDelay;
 
           if (delay > 0) {
-            try {
-              await this.wait(delay, signal);
-            } catch (waitError) {
-              const waitEventError = this.normalizeError(waitError);
-
-              if (waitEventError.code === 'CANCELLED') {
-                changeState('cancelled');
-                return this.createResult('cancelled', undefined, waitEventError);
+            await this.wait(delay, signal).catch((waitErr) => {
+              const err = this.normalizeError(waitErr);
+              if (err.code === 'CANCELLED') {
+                setState('cancelled');
+                throw err;
               }
-
-              // noinspection ExceptionCaughtLocallyJS
-              throw waitError;
-            }
+              throw waitErr;
+            });
           }
         }
       }
     } catch (error) {
       const eventError = this.normalizeError(error);
-
-      if (eventError.code === 'CANCELLED') {
-        changeState('cancelled');
-        return this.createResult('cancelled', undefined, eventError);
-      }
-
-      changeState('failed');
-      return this.createResult('failed', undefined, eventError);
+      setState(eventError.code === 'CANCELLED' ? 'cancelled' : 'failed');
+      return this.createResult(state, undefined, eventError);
     }
   }
 
@@ -125,7 +112,7 @@ export class EventTask<R = unknown> implements IEventTask<R> {
       };
     }
 
-    if (typeof error === 'object' && error !== null && 'message' in error) {
+    if (error && typeof error === 'object' && 'message' in error) {
       const e = error as { code?: string; message?: string; stack?: string };
       return {
         code: e.code ?? 'UNKNOWN',
@@ -140,24 +127,23 @@ export class EventTask<R = unknown> implements IEventTask<R> {
 
   private async runWithTimeout(): Promise<R> {
     const { signal, timeout } = this.options;
-
     if (!timeout && !signal) {
-      return (await Promise.resolve(this.handler(this.context))) as Promise<R>;
+      return this.handler(this.context) as Promise<R>;
     }
 
     return new Promise<R>((resolve, reject) => {
-      const timer = timeout ? setTimeout(() => reject(this.createError('TIMEOUT', 'Task timed out')), timeout) : null;
+      const timer = timeout && setTimeout(() => reject(this.createError('TIMEOUT', 'Task timed out')), timeout);
+
+      const onAbort = () => {
+        cleanup();
+        reject(this.createError('CANCELLED', 'Task was cancelled'));
+      };
 
       const cleanup = () => {
         if (timer) {
           clearTimeout(timer);
         }
         signal?.removeEventListener('abort', onAbort);
-      };
-
-      const onAbort = () => {
-        cleanup();
-        reject(this.createError('CANCELLED', 'Task was cancelled'));
       };
 
       signal?.addEventListener('abort', onAbort);
@@ -167,9 +153,9 @@ export class EventTask<R = unknown> implements IEventTask<R> {
           cleanup();
           resolve(result as R);
         })
-        .catch((error) => {
+        .catch((err) => {
           cleanup();
-          reject(error);
+          reject(err);
         });
     });
   }
@@ -181,14 +167,14 @@ export class EventTask<R = unknown> implements IEventTask<R> {
         resolve();
       }, ms);
 
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', onAbort);
-      };
-
       const onAbort = () => {
         cleanup();
         reject(this.createError('CANCELLED', 'Task was cancelled'));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
       };
 
       signal?.addEventListener('abort', onAbort);
