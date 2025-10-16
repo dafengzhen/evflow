@@ -17,4 +17,4 @@ bus.on('testEvent', async () => {
 
 await bus.emit('testEvent');
 
-console.log('Metrics snapshot:', perfPlugin.snapshotReport());
+console.log('Metrics snapshot:', perfPlugin.getMetrics());
