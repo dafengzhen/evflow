@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, jest } from '@jest/globals';
 
-import type { EventContext, EventError, EventHandler, EventState, EventTaskOptions } from '../types/types.ts';
+import type { EventContext, EventError, EventState, EventTaskOptions } from '../types/types.ts';
 
 import { EventTask } from './event-task.ts';
 
@@ -14,7 +14,7 @@ describe('EventTaskImpl', () => {
   describe('execute', () => {
     it('should execute successfully and return succeeded state', async () => {
       const mockResult = { data: 'test', success: true };
-      const handler: EventHandler = vi.fn().mockResolvedValue(mockResult);
+      const handler = jest.fn<any>().mockResolvedValue(mockResult);
       const options: EventTaskOptions = {};
 
       const task = new EventTask(mockContext, handler, options);
@@ -28,7 +28,7 @@ describe('EventTaskImpl', () => {
 
     it('should handle synchronous handler successfully', async () => {
       const mockResult = { success: true };
-      const handler: EventHandler = vi.fn().mockReturnValue(mockResult);
+      const handler = jest.fn<any>().mockReturnValue(mockResult);
 
       const task = new EventTask(mockContext, handler);
       const result = await task.execute();
@@ -38,30 +38,30 @@ describe('EventTaskImpl', () => {
     });
 
     it('should handle timeout and return timeout error', async () => {
-      vi.useFakeTimers();
+      jest.useFakeTimers();
 
-      const handler: EventHandler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('slow'), 100)));
       const options: EventTaskOptions = { timeout: 50 };
 
       const task = new EventTask(mockContext, handler, options);
       const promise = task.execute();
 
-      await vi.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(100);
       const result = await promise;
 
       expect(result.state).toBe('failed');
       expect(result.error?.code).toBe('TIMEOUT');
-      expect(result.error?.message).toBe('Task timed out');
+      expect(result.error?.message).toBe('Task timed out after 50ms');
 
-      vi.useRealTimers();
+      jest.useRealTimers();
     });
 
-    it('should handle cancellation via AbortSignal', async () => {
+    it('should handle cancellation jesta AbortSignal', async () => {
       const abortController = new AbortController();
-      const handler: EventHandler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('data'), 100)));
       const options: EventTaskOptions = { signal: abortController.signal };
 
@@ -79,7 +79,7 @@ describe('EventTaskImpl', () => {
     it('should retry on failure and eventually succeed', async () => {
       const mockResult = { success: true };
       let attempt = 0;
-      const handler: EventHandler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         attempt++;
         if (attempt < 3) {
           throw new Error(`Attempt ${attempt} failed`);
@@ -87,8 +87,8 @@ describe('EventTaskImpl', () => {
         return mockResult;
       });
 
-      const onRetry = vi.fn();
-      const onStateChange = vi.fn();
+      const onRetry = jest.fn<any>();
+      const onStateChange = jest.fn<any>();
       const options: EventTaskOptions = {
         maxRetries: 3,
         onRetry,
@@ -108,15 +108,15 @@ describe('EventTaskImpl', () => {
     });
 
     it('should retry with custom retry delay function', async () => {
-      vi.useFakeTimers();
+      jest.useFakeTimers();
 
       let attempt = 0;
-      const handler: EventHandler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         attempt++;
         throw new Error(`Attempt ${attempt} failed`);
       });
 
-      const retryDelay = vi.fn().mockImplementation((attempt: number) => attempt * 10);
+      const retryDelay = jest.fn<any>().mockImplementation((attempt: number) => attempt * 10);
       const options: EventTaskOptions = {
         maxRetries: 2,
         retryDelay,
@@ -126,27 +126,27 @@ describe('EventTaskImpl', () => {
       const promise = task.execute();
 
       // Advance through all retry delays
-      await vi.advanceTimersByTimeAsync(30);
+      await jest.advanceTimersByTimeAsync(30);
       const result = await promise;
 
       expect(retryDelay).toHaveBeenCalledWith(1);
       expect(retryDelay).toHaveBeenCalledWith(2);
       expect(result.state).toBe('failed');
 
-      vi.useRealTimers();
+      jest.useRealTimers();
     });
 
-    it('should use custom isRetryable function to determine retry behavior', async () => {
+    it('should use custom isRetryable function to determine retry behajestor', async () => {
       const retryableError = new Error('Retryable error');
       const nonRetryableError = new Error('Non-retryable error');
 
       let callCount = 0;
-      const handler: EventHandler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         callCount++;
         throw callCount === 1 ? retryableError : nonRetryableError;
       });
 
-      const isRetryable = vi.fn().mockImplementation((error: EventError) => {
+      const isRetryable = jest.fn<any>().mockImplementation((error: EventError) => {
         return error.message === 'Retryable error';
       });
 
@@ -169,7 +169,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should not retry when maxRetries is 0', async () => {
-      const handler: EventHandler = vi.fn().mockRejectedValue(new Error('Failed'));
+      const handler = jest.fn<any>().mockRejectedValue(new Error('Failed'));
       const options: EventTaskOptions = { maxRetries: 0 };
 
       const task = new EventTask(mockContext, handler, options);
@@ -183,7 +183,7 @@ describe('EventTaskImpl', () => {
       const abortController = new AbortController();
       abortController.abort();
 
-      const handler: EventHandler = vi.fn();
+      const handler = jest.fn<any>();
       const options: EventTaskOptions = { signal: abortController.signal };
 
       const task = new EventTask(mockContext, handler, options);
@@ -194,17 +194,17 @@ describe('EventTaskImpl', () => {
     });
 
     it('should handle cancellation during retry delay', async () => {
-      vi.useFakeTimers();
+      jest.useFakeTimers();
 
       const abortController = new AbortController();
       let callCount = 0;
 
-      const handler: EventHandler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         callCount++;
         return Promise.reject(new Error(`Attempt ${callCount} failed`));
       });
 
-      const onStateChange = vi.fn();
+      const onStateChange = jest.fn<any>();
       const options: EventTaskOptions = {
         maxRetries: 3,
         onStateChange,
@@ -216,7 +216,7 @@ describe('EventTaskImpl', () => {
       const promise = task.execute();
 
       // Wait for first execution to complete and enter retrying state
-      await vi.advanceTimersByTimeAsync(0);
+      await jest.advanceTimersByTimeAsync(0);
       expect(handler).toHaveBeenCalledTimes(1);
       expect(onStateChange).toHaveBeenCalledWith('retrying');
 
@@ -230,7 +230,7 @@ describe('EventTaskImpl', () => {
       expect(result.error?.code).toBe('CANCELLED');
       expect(result.error?.message).toBe('Task was cancelled');
 
-      vi.useRealTimers();
+      jest.useRealTimers();
     });
 
     it('should normalize different error types correctly', async () => {
@@ -243,7 +243,7 @@ describe('EventTaskImpl', () => {
       ];
 
       for (const { error, expectedCode } of testCases) {
-        const handler: EventHandler = vi.fn().mockRejectedValue(error);
+        const handler = jest.fn<any>().mockRejectedValue(error);
         const task = new EventTask(mockContext, handler);
         const result = await task.execute();
 
@@ -255,7 +255,7 @@ describe('EventTaskImpl', () => {
 
     it('should call onStateChange with correct states during successful execution', async () => {
       const states: EventState[] = [];
-      const handler: EventHandler = vi.fn().mockResolvedValue('success');
+      const handler = jest.fn<any>().mockResolvedValue('success');
       const options: EventTaskOptions = {
         onStateChange: (state) => states.push(state),
       };
@@ -268,7 +268,7 @@ describe('EventTaskImpl', () => {
 
     it('should call onStateChange with correct states during failed execution', async () => {
       const states: EventState[] = [];
-      const handler: EventHandler = vi.fn().mockRejectedValue(new Error('Failed'));
+      const handler = jest.fn<any>().mockRejectedValue(new Error('Failed'));
       const options: EventTaskOptions = {
         onStateChange: (state) => states.push(state),
       };
@@ -282,7 +282,7 @@ describe('EventTaskImpl', () => {
     it('should call onStateChange with correct states during retry sequence', async () => {
       const states: EventState[] = [];
       let attempt = 0;
-      const handler: EventHandler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         attempt++;
         if (attempt < 2) {
           throw new Error('Failed');
@@ -303,11 +303,11 @@ describe('EventTaskImpl', () => {
     });
 
     it('should handle cancellation during timeout', async () => {
-      vi.useFakeTimers();
+      jest.useFakeTimers();
 
       const abortController = new AbortController();
-      const handler: EventHandler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('data'), 100)));
       const options: EventTaskOptions = {
         signal: abortController.signal,
@@ -324,13 +324,13 @@ describe('EventTaskImpl', () => {
       expect(result.state).toBe('cancelled');
       expect(result.error?.code).toBe('CANCELLED');
 
-      vi.useRealTimers();
+      jest.useRealTimers();
     });
   });
 
   describe('error normalization', () => {
     it('should create error with stack trace from Error object', () => {
-      const task = new EventTask(mockContext, vi.fn());
+      const task = new EventTask(mockContext, jest.fn<any>());
       const testError = new Error('Test error');
 
       // @ts-expect-error - Accessing private method for testing
@@ -344,7 +344,7 @@ describe('EventTaskImpl', () => {
 
     it('should normalize error with code from object', async () => {
       const customError = { code: 'CUSTOM_CODE', message: 'Custom message' };
-      const handler: EventHandler = vi.fn().mockRejectedValue(customError);
+      const handler = jest.fn<any>().mockRejectedValue(customError);
 
       const task = new EventTask(mockContext, handler);
       const result = await task.execute();
@@ -354,7 +354,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should normalize string errors', async () => {
-      const handler: EventHandler = vi.fn().mockRejectedValue('String error');
+      const handler = jest.fn<any>().mockRejectedValue('String error');
 
       const task = new EventTask(mockContext, handler);
       const result = await task.execute();
@@ -364,7 +364,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should normalize error without message property', async () => {
-      const handler: EventHandler = vi.fn().mockRejectedValue({ someProperty: 'value' });
+      const handler = jest.fn<any>().mockRejectedValue({ someProperty: 'value' });
 
       const task = new EventTask(mockContext, handler);
       const result = await task.execute();
@@ -376,7 +376,7 @@ describe('EventTaskImpl', () => {
 
   describe('result creation', () => {
     it('should create result with success state', () => {
-      const task = new EventTask(mockContext, vi.fn());
+      const task = new EventTask(mockContext, jest.fn<any>());
       const mockResult = { data: 'test' };
 
       const result = task['createResult']('succeeded', mockResult);
@@ -387,7 +387,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should create result with error state', () => {
-      const task = new EventTask(mockContext, vi.fn());
+      const task = new EventTask(mockContext, jest.fn<any>());
       const mockError: EventError = { code: 'ERROR', message: 'Test error' };
 
       const result = task['createResult']('failed', undefined, mockError);
@@ -398,7 +398,7 @@ describe('EventTaskImpl', () => {
     });
 
     it('should create result with cancelled state', () => {
-      const task = new EventTask(mockContext, vi.fn());
+      const task = new EventTask(mockContext, jest.fn<any>());
       const mockError: EventError = { code: 'CANCELLED', message: 'Cancelled' };
 
       const result = task['createResult']('cancelled', undefined, mockError);

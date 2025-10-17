@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, jest, test } from '@jest/globals';
 
 import type {
   EventBusPlugin,
@@ -25,6 +25,166 @@ interface TestGlobalContext extends PlainObject {
   userId: string;
 }
 
+interface TestEventMap extends EventMap {
+  'user.created': { id: string; name: string };
+  'user.updated': { id: string; name: string };
+  'order.created': { id: string; amount: number };
+}
+
+class LoggingPlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+  public logs: string[] = [];
+  public installed = false;
+  public uninstalled = false;
+
+  install(eventBus: EventBus<TestEventMap, TestGlobalContext>): void {
+    this.installed = true;
+    this.logs.push('LoggingPlugin installed');
+
+    eventBus.useGlobalMiddleware(async (context, next, info) => {
+      this.logs.push(`Event started: ${info.eventName}`);
+      const startTime = Date.now();
+      try {
+        await next();
+        const duration = Date.now() - startTime;
+        this.logs.push(`Event completed: ${info.eventName} (${duration}ms)`);
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        this.logs.push(`Event failed: ${info.eventName} (${duration}ms)`);
+        throw error;
+      }
+    });
+  }
+
+  uninstall(): void {
+    this.uninstalled = true;
+    this.logs.push('LoggingPlugin uninstalled');
+  }
+}
+
+class AuthPlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+  public blockedEvents: string[] = [];
+  public installed = false;
+  private uninstallCallbacks: (() => void)[] = [];
+
+  install(eventBus: EventBus<TestEventMap, TestGlobalContext>): void {
+    this.installed = true;
+
+    const uninstall1 = eventBus.use('user.updated', async (context, next) => {
+      if (!context.global?.userId) {
+        throw new Error('Authentication required for user.updated');
+      }
+      return await next();
+    });
+
+    const uninstall2 = eventBus.use('order.created', async (context, next, info) => {
+      if (!context.global?.userId) {
+        this.blockedEvents.push(info.eventName);
+        throw new Error('Authentication required for order.created');
+      }
+      return await next();
+    });
+
+    this.uninstallCallbacks.push(uninstall1, uninstall2);
+  }
+
+  uninstall(): void {
+    this.uninstallCallbacks.forEach((callback) => callback());
+    this.uninstallCallbacks = [];
+  }
+}
+
+class PerformancePlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+  public metrics: Map<string, number[]> = new Map();
+  public installed = false;
+
+  install(eventBus: EventBus<TestEventMap, TestGlobalContext>): void {
+    this.installed = true;
+
+    eventBus.useGlobalMiddleware(async (context, next, info) => {
+      const startTime = Date.now();
+      try {
+        await next();
+        const duration = Date.now() - startTime;
+        const eventMetrics = this.metrics.get(info.eventName) || [];
+        eventMetrics.push(duration);
+        this.metrics.set(info.eventName, eventMetrics);
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        const eventMetrics = this.metrics.get(info.eventName) || [];
+        eventMetrics.push(duration);
+        this.metrics.set(info.eventName, eventMetrics);
+        throw error;
+      }
+    });
+  }
+
+  uninstall(): void {
+    this.metrics.clear();
+  }
+
+  getAverageDuration(eventName: string): number {
+    const metrics = this.metrics.get(eventName);
+    if (!metrics || metrics.length === 0) {
+      return 0;
+    }
+    return metrics.reduce((sum, duration) => sum + duration, 0) / metrics.length;
+  }
+}
+
+class ErrorHandlingPlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+  public errors: any[] = [];
+  public installed = false;
+
+  install(eventBus: EventBus<TestEventMap, TestGlobalContext>): void {
+    this.installed = true;
+
+    eventBus.useGlobalMiddleware(
+      async (context, next, info) => {
+        try {
+          await next();
+        } catch (error) {
+          this.errors.push({
+            eventName: info.eventName,
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString(),
+            context: context.global,
+          });
+        }
+      },
+      { throwOnEventError: true },
+    );
+  }
+
+  uninstall(): void {
+    this.errors.length = 0;
+  }
+}
+
+class DataTransformationPlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+  public transformations: Map<string, number> = new Map();
+  public installed = false;
+
+  install(eventBus: EventBus<TestEventMap, TestGlobalContext>): void {
+    this.installed = true;
+
+    eventBus.use('user.created', async (context, next) => {
+      const originalData = context.data;
+      if (originalData && typeof originalData === 'object' && 'name' in originalData) {
+        context.data = {
+          ...originalData,
+          name: (originalData as any).name.toUpperCase(),
+        };
+        this.transformations.set('user.created', (this.transformations.get('user.created') || 0) + 1);
+      }
+      return await next();
+    });
+  }
+
+  uninstall(): void {
+    this.transformations.clear();
+  }
+}
+
 describe('EventBusImpl', () => {
   let eventBus: IEventBus<TestEvents, TestGlobalContext>;
 
@@ -46,8 +206,8 @@ describe('EventBusImpl', () => {
     });
 
     it('should initialize with global middlewares', () => {
-      const globalMiddleware: EventMiddleware<TestEvents, keyof TestEvents, any, TestGlobalContext> = vi.fn(
-        async (ctx, next) => next(),
+      const globalMiddleware: EventMiddleware<TestEvents, any, any, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => next(),
       );
 
       const bus = new EventBus<TestEvents, TestGlobalContext>({
@@ -59,8 +219,8 @@ describe('EventBusImpl', () => {
 
     it('should initialize with plugins', async () => {
       const mockPlugin: EventBusPlugin<TestEvents, TestGlobalContext> = {
-        install: vi.fn(),
-        uninstall: vi.fn(),
+        install: jest.fn<any>(),
+        uninstall: jest.fn<any>(),
       };
 
       const bus = new EventBus<TestEvents, TestGlobalContext>({
@@ -73,7 +233,7 @@ describe('EventBusImpl', () => {
 
   describe('Event Registration and Removal', () => {
     it('should register and unregister event handlers', () => {
-      const handler: EventHandler<TestEvents, 'user.created'> = vi.fn();
+      const handler: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
 
       const unsubscribe = eventBus.on('user.created', handler);
       expect(unsubscribe).toBeDefined();
@@ -82,8 +242,8 @@ describe('EventBusImpl', () => {
     });
 
     it('should handle multiple handlers for same event', () => {
-      const handler1: EventHandler<TestEvents, 'user.created'> = vi.fn();
-      const handler2: EventHandler<TestEvents, 'user.created'> = vi.fn();
+      const handler1: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
+      const handler2: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
 
       eventBus.on('user.created', handler1);
       eventBus.on('user.created', handler2);
@@ -93,8 +253,8 @@ describe('EventBusImpl', () => {
     });
 
     it('should remove specific handler with off', () => {
-      const handler1: EventHandler<TestEvents, 'user.created'> = vi.fn();
-      const handler2: EventHandler<TestEvents, 'user.created'> = vi.fn();
+      const handler1: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
+      const handler2: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
 
       eventBus.on('user.created', handler1);
       eventBus.on('user.created', handler2);
@@ -103,8 +263,8 @@ describe('EventBusImpl', () => {
     });
 
     it('should remove all handlers for event when no handler specified', () => {
-      const handler1: EventHandler<TestEvents, 'user.created'> = vi.fn();
-      const handler2: EventHandler<TestEvents, 'user.created'> = vi.fn();
+      const handler1: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
+      const handler2: EventHandler<TestEvents, 'user.created'> = jest.fn<any>();
 
       eventBus.on('user.created', handler1);
       eventBus.on('user.created', handler2);
@@ -121,7 +281,7 @@ describe('EventBusImpl', () => {
 
   describe('Event Emission', () => {
     it('should emit event to registered handlers', async () => {
-      const handler = vi.fn(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
+      const handler = jest.fn<any>(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
         return `processed: ${ctx.data.name}`;
       });
 
@@ -150,7 +310,7 @@ describe('EventBusImpl', () => {
     });
 
     it('should execute once handlers only once', async () => {
-      const handler = vi.fn(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
+      const handler = jest.fn<any>(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
         return `processed: ${ctx.data.name}`;
       });
 
@@ -169,12 +329,12 @@ describe('EventBusImpl', () => {
     it('should handle handler priorities', async () => {
       const executionOrder: string[] = [];
 
-      const handler1 = vi.fn(async () => {
+      const handler1 = jest.fn<any>(async () => {
         executionOrder.push('handler1');
         return 'result1';
       });
 
-      const handler2 = vi.fn(async () => {
+      const handler2 = jest.fn<any>(async () => {
         executionOrder.push('handler2');
         return 'result2';
       });
@@ -194,14 +354,14 @@ describe('EventBusImpl', () => {
 
   describe('Middleware Functionality', () => {
     it('should register and use event-specific middleware', async () => {
-      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           (ctx.data as any).processed = true;
           return next();
         },
       );
 
-      const handler = vi.fn(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
+      const handler = jest.fn<any>(async (ctx: EventContext<{ id: string; name: string }, TestGlobalContext>) => {
         return `handler: ${ctx.data.name}`;
       });
 
@@ -219,14 +379,14 @@ describe('EventBusImpl', () => {
     });
 
     it('should register and use global middleware', async () => {
-      const globalMiddleware: EventMiddleware<TestEvents, keyof TestEvents, any, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const globalMiddleware: EventMiddleware<TestEvents, any, any, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           (ctx as any).globalProcessed = true;
           return next();
         },
       );
 
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         return 'result';
       });
 
@@ -244,15 +404,15 @@ describe('EventBusImpl', () => {
     });
 
     it('should handle middleware with filters', async () => {
-      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => next(),
+      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => next(),
       );
 
       const filter: MiddlewareOptions['filter'] = (ctx) => ctx.data.name === 'John';
 
       eventBus.use('user.created', middleware, { filter });
 
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         return 'result';
       });
 
@@ -275,15 +435,15 @@ describe('EventBusImpl', () => {
     it('should handle middleware priorities', async () => {
       const executionOrder: string[] = [];
 
-      const middleware1: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware1: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           executionOrder.push('middleware1');
           return next();
         },
       );
 
-      const middleware2: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware2: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           executionOrder.push('middleware2');
           return next();
         },
@@ -292,7 +452,7 @@ describe('EventBusImpl', () => {
       eventBus.use('user.created', middleware1, { priority: 10 });
       eventBus.use('user.created', middleware2, { priority: 20 });
 
-      const handler = vi.fn(async () => 'result');
+      const handler = jest.fn<any>(async () => 'result');
       eventBus.on('user.created', handler);
 
       const context: EventContext<{ id: string; name: string }, TestGlobalContext> = {
@@ -308,7 +468,7 @@ describe('EventBusImpl', () => {
   describe('Error Handling', () => {
     it('should handle handler errors gracefully', async () => {
       const error = new Error('Handler failed');
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         throw error;
       });
 
@@ -327,11 +487,13 @@ describe('EventBusImpl', () => {
 
     it('should handle middleware errors', async () => {
       const middlewareError = new Error('Middleware failed');
-      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(async () => {
-        throw middlewareError;
-      });
+      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async () => {
+          throw middlewareError;
+        },
+      );
 
-      const handler = vi.fn(async () => 'result');
+      const handler = jest.fn<any>(async () => 'result');
 
       eventBus.use('user.created', middleware);
       eventBus.on('user.created', handler);
@@ -352,7 +514,7 @@ describe('EventBusImpl', () => {
     it('should handle parallel execution', async () => {
       const delays = [100, 50, 30];
       const handlers = delays.map((delay, index) =>
-        vi.fn(async () => {
+        jest.fn<any>(async () => {
           await new Promise((resolve) => setTimeout(resolve, delay));
           return `result${index + 1}`;
         }),
@@ -378,7 +540,7 @@ describe('EventBusImpl', () => {
       const delays = [50, 30, 20];
 
       const handlers = delays.map((delay, index) =>
-        vi.fn(async () => {
+        jest.fn<any>(async () => {
           await new Promise((resolve) => setTimeout(resolve, delay));
           return `result${index + 1}`;
         }),
@@ -398,11 +560,11 @@ describe('EventBusImpl', () => {
     });
 
     it('should handle stopOnError option', async () => {
-      const handler1 = vi.fn(async () => {
+      const handler1 = jest.fn<any>(async () => {
         throw new Error('First handler failed');
       });
 
-      const handler2 = vi.fn(async () => 'success');
+      const handler2 = jest.fn<any>(async () => 'success');
 
       eventBus.on('user.created', handler1);
       eventBus.on('user.created', handler2);
@@ -421,7 +583,7 @@ describe('EventBusImpl', () => {
     });
 
     it('should handle global timeout', async () => {
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
         return 'result';
       });
@@ -445,7 +607,7 @@ describe('EventBusImpl', () => {
       let maxConcurrent = 0;
 
       const handlers = Array.from({ length: 5 }, (_, i) =>
-        vi.fn(async () => {
+        jest.fn<any>(async () => {
           concurrent++;
           maxConcurrent = Math.max(maxConcurrent, concurrent);
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -471,7 +633,7 @@ describe('EventBusImpl', () => {
     });
 
     it('should include traceId in results', async () => {
-      const handler = vi.fn(async () => 'result');
+      const handler = jest.fn<any>(async () => 'result');
       eventBus.on('user.created', handler);
 
       const context: EventContext<{ id: string; name: string }, TestGlobalContext> = {
@@ -489,7 +651,7 @@ describe('EventBusImpl', () => {
   describe('Task Options', () => {
     it('should handle task options with retry logic', async () => {
       let attempt = 0;
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         attempt++;
         if (attempt < 3) {
           throw new Error('Temporary failure');
@@ -517,7 +679,7 @@ describe('EventBusImpl', () => {
     });
 
     it('should handle task timeout', async () => {
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
         return 'result';
       });
@@ -540,7 +702,7 @@ describe('EventBusImpl', () => {
 
   describe('Destroy and Cleanup', () => {
     it('should destroy event bus and clear all handlers', () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
       eventBus.on('user.created', handler);
       eventBus.on('user.updated', handler);
 
@@ -558,7 +720,7 @@ describe('EventBusImpl', () => {
 
   describe('Unsubscribe Functionality', () => {
     it('should return working unsubscribe function from on', () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       const unsubscribe = eventBus.on('user.created', handler);
 
@@ -576,15 +738,15 @@ describe('EventBusImpl', () => {
     });
 
     it('should return working unsubscribe function from use', () => {
-      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => next(),
+      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => next(),
       );
 
       const unsubscribe = eventBus.use('user.created', middleware);
 
       unsubscribe();
 
-      const handler = vi.fn(async () => 'result');
+      const handler = jest.fn<any>(async () => 'result');
       eventBus.on('user.created', handler);
 
       const context: EventContext<{ id: string; name: string }, TestGlobalContext> = {
@@ -597,15 +759,15 @@ describe('EventBusImpl', () => {
     });
 
     it('should return working unsubscribe function from useGlobalMiddleware', () => {
-      const middleware: EventMiddleware<TestEvents, keyof TestEvents, any, TestGlobalContext> = vi.fn(
-        async (ctx, next) => next(),
+      const middleware: EventMiddleware<TestEvents, any, any, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => next(),
       );
 
       const unsubscribe = eventBus.useGlobalMiddleware(middleware);
 
       unsubscribe();
 
-      const handler = vi.fn(async () => 'result');
+      const handler = jest.fn<any>(async () => 'result');
       eventBus.on('user.created', handler);
 
       const context: EventContext<{ id: string; name: string }, TestGlobalContext> = {
@@ -622,18 +784,18 @@ describe('EventBusImpl', () => {
     it('should handle multiple events with mixed configurations', async () => {
       const results: string[] = [];
 
-      const handler1 = vi.fn(async () => {
+      const handler1 = jest.fn<any>(async () => {
         results.push('handler1');
         return 'result1';
       });
 
-      const handler2 = vi.fn(async () => {
+      const handler2 = jest.fn<any>(async () => {
         results.push('handler2');
         return 'result2';
       });
 
-      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           results.push('middleware-before');
           const result = await next();
           results.push('middleware-after');
@@ -664,8 +826,8 @@ describe('EventBusImpl', () => {
     it('should handle async middleware chain correctly', async () => {
       const executionOrder: string[] = [];
 
-      const middleware1: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware1: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           executionOrder.push('middleware1-start');
           const result = await next();
           executionOrder.push('middleware1-end');
@@ -673,8 +835,8 @@ describe('EventBusImpl', () => {
         },
       );
 
-      const middleware2: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = vi.fn(
-        async (ctx, next) => {
+      const middleware2: EventMiddleware<TestEvents, 'user.created', string, TestGlobalContext> = jest.fn<any>(
+        async (ctx: any, next: any) => {
           executionOrder.push('middleware2-start');
           const result = await next();
           executionOrder.push('middleware2-end');
@@ -682,7 +844,7 @@ describe('EventBusImpl', () => {
         },
       );
 
-      const handler = vi.fn(async () => {
+      const handler = jest.fn<any>(async () => {
         executionOrder.push('handler');
         return 'result';
       });
@@ -710,7 +872,7 @@ describe('EventBusImpl', () => {
 
 describe('EventBus Pattern Matching', () => {
   let bus: EventBus<any>;
-  const mockHandler = vi.fn();
+  const mockHandler = jest.fn<any>();
 
   beforeEach(() => {
     bus = new EventBus();
@@ -785,7 +947,7 @@ describe('EventBus Pattern Matching', () => {
 
 describe('Advanced Pattern Matching', () => {
   let bus: EventBus<any>;
-  const mockHandler = vi.fn();
+  const mockHandler = jest.fn<any>();
 
   beforeEach(() => {
     mockHandler.mockClear();
@@ -883,9 +1045,9 @@ describe('Advanced Pattern Matching', () => {
 
 describe('Pattern Handler Management', () => {
   let bus: EventBus<any>;
-  const handler1 = vi.fn();
-  const handler2 = vi.fn();
-  const handler3 = vi.fn();
+  const handler1 = jest.fn<any>();
+  const handler2 = jest.fn<any>();
+  const handler3 = jest.fn<any>();
 
   beforeEach(() => {
     bus = new EventBus();
@@ -945,9 +1107,9 @@ describe('Pattern Handler Management', () => {
     it('should execute handlers in priority order', async () => {
       const callOrder: string[] = [];
 
-      const highPriorityHandler = vi.fn(() => callOrder.push('high'));
-      const mediumPriorityHandler = vi.fn(() => callOrder.push('medium'));
-      const lowPriorityHandler = vi.fn(() => callOrder.push('low'));
+      const highPriorityHandler = jest.fn<any>(() => callOrder.push('high'));
+      const mediumPriorityHandler = jest.fn<any>(() => callOrder.push('medium'));
+      const lowPriorityHandler = jest.fn<any>(() => callOrder.push('low'));
 
       bus.match('user.*', lowPriorityHandler, { priority: 1 });
       bus.match('user.*', highPriorityHandler, { priority: 100 });
@@ -961,8 +1123,8 @@ describe('Pattern Handler Management', () => {
     it('should mix exact and pattern handlers with correct priority', async () => {
       const callOrder: string[] = [];
 
-      const exactHandler = vi.fn(() => callOrder.push('exact'));
-      const patternHandler = vi.fn(() => callOrder.push('pattern'));
+      const exactHandler = jest.fn<any>(() => callOrder.push('exact'));
+      const patternHandler = jest.fn<any>(() => callOrder.push('pattern'));
 
       bus.on('user.created', exactHandler, { priority: 75 });
       bus.match('user.*', patternHandler, { priority: 50 });
@@ -1009,8 +1171,8 @@ describe('Pattern Matching Integration', () => {
 
   describe('Mixed exact and pattern matching', () => {
     it('should call both exact and pattern handlers', async () => {
-      const exactHandler = vi.fn();
-      const patternHandler = vi.fn();
+      const exactHandler = jest.fn<any>();
+      const patternHandler = jest.fn<any>();
 
       bus.on('user.created', exactHandler);
       bus.match('user.*', patternHandler);
@@ -1022,7 +1184,7 @@ describe('Pattern Matching Integration', () => {
     });
 
     it('should not duplicate handler calls', async () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       // Same handler registered both ways
       bus.on('user.created', handler);
@@ -1036,8 +1198,8 @@ describe('Pattern Matching Integration', () => {
 
   describe('Middleware with pattern matching', () => {
     it('should apply middleware to pattern-matched events', async () => {
-      const handler = vi.fn();
-      const middleware = vi.fn((ctx, next) => next());
+      const handler = jest.fn<any>();
+      const middleware = jest.fn<any>((ctx: any, next: any) => next());
 
       bus.use('user.*', middleware);
       bus.match('user.*', handler);
@@ -1049,8 +1211,8 @@ describe('Pattern Matching Integration', () => {
     });
 
     it('should apply global middleware to pattern-matched events', async () => {
-      const handler = vi.fn();
-      const globalMiddleware = vi.fn((ctx, next) => next());
+      const handler = jest.fn<any>();
+      const globalMiddleware = jest.fn<any>((ctx: any, next: any) => next());
 
       bus.useGlobalMiddleware(globalMiddleware);
       bus.match('user.*', handler);
@@ -1064,10 +1226,10 @@ describe('Pattern Matching Integration', () => {
 
   describe('Complex scenario testing', () => {
     it('should handle multiple overlapping patterns', async () => {
-      const allHandler = vi.fn();
-      const userHandler = vi.fn();
-      const createdHandler = vi.fn();
-      const exactHandler = vi.fn();
+      const allHandler = jest.fn<any>();
+      const userHandler = jest.fn<any>();
+      const createdHandler = jest.fn<any>();
+      const exactHandler = jest.fn<any>();
 
       bus.match('*', allHandler);
       bus.match('user.*', userHandler);
@@ -1092,11 +1254,11 @@ describe('Pattern Matching Integration', () => {
       });
 
       const handlers = {
-        all: vi.fn(),
-        api: vi.fn(),
-        apiV1: vi.fn(),
-        apiV1Users: vi.fn(),
-        exact: vi.fn(),
+        all: jest.fn<any>(),
+        api: jest.fn<any>(),
+        apiV1: jest.fn<any>(),
+        apiV1Users: jest.fn<any>(),
+        exact: jest.fn<any>(),
       };
 
       bus.match('**', handlers.all);
@@ -1117,7 +1279,7 @@ describe('Pattern Matching Integration', () => {
 
   describe('Performance and edge cases', () => {
     it('should handle large number of patterns efficiently', async () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       // Register many patterns
       for (let i = 0; i < 100; i++) {
@@ -1130,7 +1292,7 @@ describe('Pattern Matching Integration', () => {
     });
 
     it('should handle empty event names', async () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       bus.match('*', handler);
 
@@ -1140,8 +1302,8 @@ describe('Pattern Matching Integration', () => {
     });
 
     it('should handle events with same name as wildcard', async () => {
-      const starHandler = vi.fn();
-      const wildcardHandler = vi.fn();
+      const starHandler = jest.fn<any>();
+      const wildcardHandler = jest.fn<any>();
 
       bus.on('*', starHandler); // Exact match for event named "*"
       bus.match('*', wildcardHandler); // Pattern match for all events
@@ -1164,7 +1326,7 @@ describe('Pattern Matching Error Handling', () => {
 
   describe('Invalid pattern handling', () => {
     it('should handle patterns with consecutive separators', async () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       bus.match('user..created', handler); // Double separator
 
@@ -1175,7 +1337,7 @@ describe('Pattern Matching Error Handling', () => {
     });
 
     it('should handle patterns with leading/trailing separators', async () => {
-      const handler = vi.fn();
+      const handler = jest.fn<any>();
 
       bus.match('.user.', handler); // Leading and trailing separator
 
@@ -1188,8 +1350,8 @@ describe('Pattern Matching Error Handling', () => {
 
   describe('Handler error scenarios', () => {
     it('should continue processing other handlers when one fails', async () => {
-      const errorHandler = vi.fn().mockRejectedValue(new Error('Handler failed'));
-      const successHandler = vi.fn().mockResolvedValue('success');
+      const errorHandler = jest.fn<any>().mockRejectedValue(new Error('Handler failed'));
+      const successHandler = jest.fn<any>().mockResolvedValue('success');
 
       bus.match('user.*', errorHandler);
       bus.match('user.*', successHandler);
@@ -1203,8 +1365,8 @@ describe('Pattern Matching Error Handling', () => {
     });
 
     it('should handle stopOnError option with pattern handlers', async () => {
-      const handler1 = vi.fn().mockRejectedValue(new Error('First failed'));
-      const handler2 = vi.fn(); // Should not be called
+      const handler1 = jest.fn<any>().mockRejectedValue(new Error('First failed'));
+      const handler2 = jest.fn<any>(); // Should not be called
 
       bus.match('user.*', handler1);
       bus.match('user.*', handler2);
@@ -1233,11 +1395,11 @@ describe('EventBus Global Middleware', () => {
 
   beforeEach(() => {
     eventBus = new EventBus();
-    mockGlobalMiddleware = vi.fn(async (context, next) => {
+    mockGlobalMiddleware = jest.fn<any>(async (context: any, next: any) => {
       context.meta.globalMiddlewareCalled = true;
       return next();
     });
-    mockHandler = vi.fn(async (context) => {
+    mockHandler = jest.fn<any>(async (context: any) => {
       context.meta.handlerCalled = true;
       return 'handler-result';
     });
@@ -1254,8 +1416,6 @@ describe('EventBus Global Middleware', () => {
   describe('useGlobalMiddleware', () => {
     it('should register global middleware and return removal function', () => {
       const removeMiddleware = eventBus.useGlobalMiddleware(mockGlobalMiddleware);
-
-      expect(removeMiddleware).toBeTypeOf('function');
 
       // Test that removal works
       removeMiddleware();
@@ -1283,14 +1443,14 @@ describe('EventBus Global Middleware', () => {
       const executionOrder: string[] = [];
       let emittedContext: any;
 
-      const middleware1 = vi.fn(async (context, next) => {
+      const middleware1 = jest.fn<any>(async (context: any, next: any) => {
         executionOrder.push('middleware1');
         context.meta.order1 = true;
         emittedContext = context; // Capture the context
         return next();
       });
 
-      const middleware2 = vi.fn(async (context, next) => {
+      const middleware2 = jest.fn<any>(async (context: any, next: any) => {
         executionOrder.push('middleware2');
         context.meta.order2 = true;
         emittedContext = context; // Capture the context
@@ -1314,7 +1474,7 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should allow global middleware to modify context for handlers', async () => {
-      const modifyingMiddleware = vi.fn(async (context, next) => {
+      const modifyingMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.modifiedByGlobal = true;
         context.data.modifiedValue = 'modified';
         return next();
@@ -1322,7 +1482,7 @@ describe('EventBus Global Middleware', () => {
 
       eventBus.useGlobalMiddleware(modifyingMiddleware);
 
-      const testHandler = vi.fn(async (context) => {
+      const testHandler = jest.fn<any>(async (context: any) => {
         expect(context.meta.modifiedByGlobal).toBe(true);
         expect(context.data.modifiedValue).toBe('modified');
         return 'result';
@@ -1341,7 +1501,7 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should support global middleware with filter', async () => {
-      const filteredMiddleware = vi.fn(async (context, next) => {
+      const filteredMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.filtered = true;
         return next();
       });
@@ -1370,12 +1530,12 @@ describe('EventBus Global Middleware', () => {
     it('should execute global middleware before event-specific middleware', async () => {
       const executionOrder: string[] = [];
 
-      const globalMiddleware = vi.fn(async (context, next) => {
+      const globalMiddleware = jest.fn<any>(async (context: any, next: any) => {
         executionOrder.push('global');
         return next();
       });
 
-      const eventMiddleware = vi.fn(async (context, next) => {
+      const eventMiddleware = jest.fn<any>(async (context: any, next: any) => {
         executionOrder.push('event');
         return next();
       });
@@ -1390,7 +1550,7 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should allow global middleware to prevent handler execution', async () => {
-      const blockingMiddleware = vi.fn(async (context) => {
+      const blockingMiddleware = jest.fn<any>(async (context: any) => {
         context.meta.blocked = true;
         // Don't call next() - this blocks further execution
         return 'blocked-result';
@@ -1402,11 +1562,11 @@ describe('EventBus Global Middleware', () => {
       const results = await eventBus.emit('test.event', testContext);
 
       expect(mockHandler).not.toHaveBeenCalled();
-      expect(results).length(0);
+      expect(results).toHaveLength(0);
     });
 
     it('should handle errors in global middleware gracefully', async () => {
-      const errorMiddleware = vi.fn(async () => {
+      const errorMiddleware = jest.fn<any>(async () => {
         throw new Error('Global middleware error');
       });
 
@@ -1422,7 +1582,7 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should continue execution if global middleware calls next after error', async () => {
-      const errorRecoveryMiddleware = vi.fn(async (context, next) => {
+      const errorRecoveryMiddleware = jest.fn<any>(async (context: any, next: any) => {
         try {
           // noinspection ExceptionCaughtLocallyJS
           throw new Error('Some error');
@@ -1445,15 +1605,15 @@ describe('EventBus Global Middleware', () => {
 
   describe('Global Middleware with Multiple Events', () => {
     it('should apply same global middleware to multiple events', async () => {
-      const globalMiddleware = vi.fn(async (context, next) => {
+      const globalMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.globalProcessed = true;
         return next();
       });
 
       eventBus.useGlobalMiddleware(globalMiddleware);
 
-      const handler1 = vi.fn();
-      const handler2 = vi.fn();
+      const handler1 = jest.fn<any>();
+      const handler2 = jest.fn<any>();
 
       eventBus.on('event1', handler1);
       eventBus.on('event2', handler2);
@@ -1475,14 +1635,14 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should maintain separate context for each event with global middleware', async () => {
-      const contextModifyingMiddleware = vi.fn(async (context, next) => {
+      const contextModifyingMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.processedAt = Date.now();
         return next();
       });
 
       eventBus.useGlobalMiddleware(contextModifyingMiddleware);
 
-      const handler = vi.fn(async (context) => {
+      const handler = jest.fn<any>(async (context: any) => {
         return context.meta.processedAt;
       });
 
@@ -1518,13 +1678,13 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should handle multiple global middleware removals correctly', async () => {
-      const middleware1 = vi.fn(async (context, next) => {
+      const middleware1 = jest.fn<any>(async (context: any, next: any) => {
         return next();
       });
-      const middleware2 = vi.fn(async (context, next) => {
+      const middleware2 = jest.fn<any>(async (context: any, next: any) => {
         return next();
       });
-      const middleware3 = vi.fn(async (context, next) => {
+      const middleware3 = jest.fn<any>(async (context: any, next: any) => {
         return next();
       });
 
@@ -1562,12 +1722,12 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should combine option global middlewares with dynamically added ones', async () => {
-      const optionMiddleware = vi.fn(async (context, next) => {
+      const optionMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.fromOption = true;
         return next();
       });
 
-      const dynamicMiddleware = vi.fn(async (context, next) => {
+      const dynamicMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.fromDynamic = true;
         return next();
       });
@@ -1575,7 +1735,7 @@ describe('EventBus Global Middleware', () => {
       const bus = new EventBus<any>({ globalMiddlewares: [optionMiddleware] });
       bus.useGlobalMiddleware(dynamicMiddleware);
 
-      const handler = vi.fn(async (context) => {
+      const handler = jest.fn<any>(async (context: any) => {
         // Capture the modified context from within the handler
         expect(context.meta.fromOption).toBe(true);
         expect(context.meta.fromDynamic).toBe(true);
@@ -1595,7 +1755,7 @@ describe('EventBus Global Middleware', () => {
 
   describe('Global Middleware Error Handling', () => {
     it('should handle async errors in global middleware', async () => {
-      const asyncErrorMiddleware = vi.fn(async () => {
+      const asyncErrorMiddleware = jest.fn<any>(async () => {
         await Promise.reject(new Error('Async error'));
       });
 
@@ -1609,11 +1769,11 @@ describe('EventBus Global Middleware', () => {
     });
 
     it('should not break other global middlewares when one fails', async () => {
-      const failingMiddleware = vi.fn(async () => {
+      const failingMiddleware = jest.fn<any>(async () => {
         throw new Error('Failed middleware');
       });
 
-      const succeedingMiddleware = vi.fn(async (context, next) => {
+      const succeedingMiddleware = jest.fn<any>(async (context: any, next: any) => {
         context.meta.succeeded = true;
         return next();
       });
@@ -1627,6 +1787,244 @@ describe('EventBus Global Middleware', () => {
       // The succeeding middleware should NOT be called when previous middleware fails
       expect(succeedingMiddleware).not.toHaveBeenCalled();
       expect(results[0].state).toBe('failed');
+    });
+  });
+});
+
+describe('EventBus Plugin System', () => {
+  let eventBus: EventBus<TestEventMap, TestGlobalContext>;
+
+  beforeEach(() => {
+    eventBus = new EventBus<TestEventMap, TestGlobalContext>();
+  });
+
+  afterEach(() => {
+    eventBus.destroy();
+  });
+
+  describe('Basic Plugin Functionality', () => {
+    test('should install and uninstall plugin', () => {
+      const plugin = new LoggingPlugin();
+
+      const uninstall = eventBus.usePlugin(plugin);
+
+      expect(plugin.installed).toBe(true);
+      expect(plugin.logs).toContain('LoggingPlugin installed');
+
+      uninstall();
+
+      expect(plugin.uninstalled).toBe(true);
+      expect(plugin.logs).toContain('LoggingPlugin uninstalled');
+    });
+
+    test('should handle multiple plugins', () => {
+      const plugin1 = new LoggingPlugin();
+      const plugin2 = new AuthPlugin();
+
+      eventBus.usePlugin(plugin1);
+      eventBus.usePlugin(plugin2);
+
+      expect(plugin1.installed).toBe(true);
+      expect(plugin2.installed).toBe(true);
+    });
+
+    test('should uninstall all plugins on destroy', () => {
+      const plugin1 = new LoggingPlugin();
+      const plugin2 = new AuthPlugin();
+
+      eventBus.usePlugin(plugin1);
+      eventBus.usePlugin(plugin2);
+
+      eventBus.destroy();
+
+      expect(plugin1.uninstalled).toBe(true);
+    });
+  });
+
+  describe('Plugin Middleware Integration', () => {
+    test('should apply plugin middleware to events', async () => {
+      const authPlugin = new AuthPlugin();
+      eventBus.usePlugin(authPlugin);
+
+      const handler = jest.fn();
+      eventBus.on('user.updated', handler);
+
+      const results = await eventBus.emit('user.updated', { data: { id: '1', name: 'John' } });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].state).toBe('failed');
+      expect(results[0].error?.message).toBe('Authentication required for user.updated');
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('should allow events with proper authentication', async () => {
+      const authPlugin = new AuthPlugin();
+      eventBus.usePlugin(authPlugin);
+
+      const handler = jest.fn<any>().mockResolvedValue('success');
+      eventBus.on('user.updated', handler);
+
+      const results = await eventBus.emit('user.updated', {
+        data: { id: '1', name: 'John' },
+        global: { userId: 'user123', requestId: 'req123' },
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].state).toBe('succeeded');
+    });
+  });
+
+  describe('Plugin Data Transformation', () => {
+    test('should transform event data through plugin', async () => {
+      const transformationPlugin = new DataTransformationPlugin();
+      eventBus.usePlugin(transformationPlugin);
+
+      const receivedData: any[] = [];
+      eventBus.on('user.created', (context) => {
+        receivedData.push(context.data);
+      });
+
+      await eventBus.emit('user.created', {
+        data: { id: '1', name: 'john doe' },
+      });
+
+      expect(receivedData[0].name).toBe('JOHN DOE');
+      expect(transformationPlugin.transformations.get('user.created')).toBe(1);
+    });
+  });
+
+  describe('Plugin Error Handling', () => {
+    test('should capture errors through error handling plugin', async () => {
+      const errorPlugin = new ErrorHandlingPlugin();
+      const loggingPlugin = new LoggingPlugin();
+
+      eventBus.usePlugin(errorPlugin);
+      eventBus.usePlugin(loggingPlugin);
+
+      eventBus.on('user.created', () => {
+        throw new Error('Test error');
+      });
+
+      await eventBus.emit('user.created', {
+        data: { id: '1', name: 'John' },
+      });
+
+      expect(errorPlugin.errors).toHaveLength(1);
+      expect(errorPlugin.errors[0].error).toBe('Test error');
+      expect(errorPlugin.errors[0].eventName).toBe('user.created');
+    });
+  });
+
+  describe('Plugin Performance Monitoring', () => {
+    test('should track performance metrics', async () => {
+      const performancePlugin = new PerformancePlugin();
+      eventBus.usePlugin(performancePlugin);
+
+      eventBus.on('user.created', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      await eventBus.emit('user.created', {
+        data: { id: '1', name: 'John' },
+      });
+
+      await eventBus.emit('user.created', {
+        data: { id: '2', name: 'Jane' },
+      });
+
+      const metrics = performancePlugin.metrics.get('user.created');
+      expect(metrics).toHaveLength(2);
+      expect(metrics![0]).toBeGreaterThan(0);
+      expect(metrics![1]).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Plugin Interaction', () => {
+    test('should work with multiple plugins in correct order', async () => {
+      const loggingPlugin = new LoggingPlugin();
+      const authPlugin = new AuthPlugin();
+      const performancePlugin = new PerformancePlugin();
+
+      eventBus.usePlugin(loggingPlugin);
+      eventBus.usePlugin(authPlugin);
+      eventBus.usePlugin(performancePlugin);
+
+      const handler = jest.fn();
+      eventBus.on('order.created', handler);
+
+      await eventBus.emit('order.created', {
+        data: { id: '1', amount: 100 },
+      });
+
+      expect(authPlugin.blockedEvents).toContain('order.created');
+      expect(handler).not.toHaveBeenCalled();
+
+      expect(loggingPlugin.logs.some((log) => log.includes('order.created'))).toBe(true);
+    });
+
+    test('should handle plugin uninstallation correctly', async () => {
+      const plugin = new AuthPlugin();
+      const uninstall = eventBus.usePlugin(plugin);
+
+      const handler = jest.fn();
+      eventBus.on('user.updated', handler);
+
+      const results1 = await eventBus.emit('user.updated', { data: { id: '1', name: 'John' } });
+
+      expect(results1).toHaveLength(1);
+      expect(results1[0].state).toBe('failed');
+      expect(results1[0].error?.message).toBe('Authentication required for user.updated');
+      expect(handler).not.toHaveBeenCalled();
+
+      uninstall();
+
+      const results2 = await eventBus.emit('user.updated', { data: { id: '1', name: 'John' } });
+
+      expect(results2).toHaveLength(1);
+      expect(results2[0].state).toBe('succeeded');
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('Plugin Lifecycle', () => {
+    test('should handle async plugin uninstallation - alternative approach', async () => {
+      let uninstallCompleted = false;
+
+      class AsyncPlugin implements EventBusPlugin<TestEventMap, TestGlobalContext> {
+        public installed = false;
+
+        install(): void {
+          this.installed = true;
+        }
+
+        async uninstall(): Promise<void> {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          uninstallCompleted = true;
+        }
+      }
+
+      const asyncPlugin = new AsyncPlugin();
+      const uninstall = eventBus.usePlugin(asyncPlugin);
+
+      expect(asyncPlugin.installed).toBe(true);
+
+      uninstall();
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(uninstallCompleted).toBe(true);
+    });
+
+    test('should handle plugin installation errors gracefully', () => {
+      const faultyPlugin: EventBusPlugin<TestEventMap, TestGlobalContext> = {
+        install() {
+          throw new Error('Installation failed');
+        },
+      };
+
+      expect(() => {
+        eventBus.usePlugin(faultyPlugin);
+      }).not.toThrow();
     });
   });
 });

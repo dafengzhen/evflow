@@ -8,7 +8,7 @@ import { EventBus } from './event-bus.ts';
  * @author dafengzhen
  */
 export const EventBusFactory: IEventBusFactory = {
-  create<EM extends EventMap = Record<string, never>, GC extends PlainObject = Record<string, never>>(
+  create<EM extends EventMap = EventMap, GC extends PlainObject = PlainObject>(
     options?: EventBusOptions<EM, GC>,
   ): IEventBus<EM, GC> {
     return new EventBus<EM, GC>(options);

@@ -6,6 +6,8 @@ export const DEFAULT_PARALLEL = true;
 
 export const DEFAULT_STOP_ON_ERROR = false;
 
+export const DEFAULT_ONCE = false;
+
 export const DEFAULT_PRIORITY = 0;
 
 export const DEFAULT_THROW_ON_EVENT_ERROR = false;

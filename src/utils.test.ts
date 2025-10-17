@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { EventError, EventState } from './types/types.ts';
 
@@ -11,12 +11,12 @@ const mockContext = {
   timestamp: Date.now(),
 };
 
-const mockOnStateChange = vi.fn();
-const mockOnRetry = vi.fn();
+const mockOnStateChange = jest.fn<any>();
+const mockOnRetry = jest.fn<any>();
 
 describe('RetryStrategies', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    jest.restoreAllMocks();
   });
 
   describe('exponential', () => {
@@ -89,7 +89,7 @@ describe('RetryStrategies', () => {
 
   describe('jitter', () => {
     beforeEach(() => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      jest.spyOn(Math, 'random').mockReturnValue(0.5);
     });
 
     it('should calculate jittered delays with default jitter factor', () => {
@@ -121,11 +121,11 @@ describe('RetryStrategies', () => {
     });
 
     it('should handle different random values', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.0);
+      jest.spyOn(Math, 'random').mockReturnValue(0.0);
       const strategy1 = RetryStrategies.jitter(100);
       expect(strategy1(1)).toBe(100); // 100 + (100 * 0.5 * 0.0) = 100
 
-      vi.spyOn(Math, 'random').mockReturnValue(1.0);
+      jest.spyOn(Math, 'random').mockReturnValue(1.0);
       const strategy2 = RetryStrategies.jitter(100);
       expect(strategy2(1)).toBe(150); // 100 + (100 * 0.5 * 1.0) = 150
     });
@@ -231,18 +231,18 @@ describe('RetryConditions', () => {
 
 describe('EventTaskImpl with RetryStrategies', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
-    vi.clearAllMocks();
+    jest.useFakeTimers();
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    jest.useRealTimers();
   });
 
   describe('exponential retry strategy', () => {
     it('should use exponential backoff for retries', async () => {
       let callCount = 0;
-      const handler = vi.fn().mockImplementation(() => {
+      const handler = jest.fn<any>().mockImplementation(() => {
         callCount++;
         if (callCount < 3) {
           throw new Error('Temporary error');
@@ -260,8 +260,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // Advance through retries
-      await vi.advanceTimersByTimeAsync(100); // First retry delay
-      await vi.advanceTimersByTimeAsync(200); // Second retry delay
+      await jest.advanceTimersByTimeAsync(100); // First retry delay
+      await jest.advanceTimersByTimeAsync(200); // Second retry delay
 
       const result = await promise;
 
@@ -274,8 +274,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
     });
 
     it('should respect maxDelay in exponential strategy', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockRejectedValueOnce(new Error('Error 3'))
@@ -290,10 +290,10 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // Check that delays are capped at 300ms
-      await vi.advanceTimersByTimeAsync(100); // First retry: 100ms
-      await vi.advanceTimersByTimeAsync(200); // Second retry: 200ms
-      await vi.advanceTimersByTimeAsync(300); // Third retry: 300ms (capped)
-      await vi.advanceTimersByTimeAsync(300); // Fourth retry: 300ms (capped)
+      await jest.advanceTimersByTimeAsync(100); // First retry: 100ms
+      await jest.advanceTimersByTimeAsync(200); // Second retry: 200ms
+      await jest.advanceTimersByTimeAsync(300); // Third retry: 300ms (capped)
+      await jest.advanceTimersByTimeAsync(300); // Fourth retry: 300ms (capped)
 
       await promise;
 
@@ -306,8 +306,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('fixed retry strategy', () => {
     it('should use fixed delay for all retries', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockResolvedValue('success');
@@ -321,8 +321,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // All retries should use 150ms delay
-      await vi.advanceTimersByTimeAsync(150); // First retry
-      await vi.advanceTimersByTimeAsync(150); // Second retry
+      await jest.advanceTimersByTimeAsync(150); // First retry
+      await jest.advanceTimersByTimeAsync(150); // Second retry
 
       const result = await promise;
 
@@ -331,7 +331,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
     });
 
     it('should work with zero fixed delay', async () => {
-      const handler = vi.fn().mockRejectedValueOnce(new Error('Error 1')).mockResolvedValue('success');
+      const handler = jest.fn<any>().mockRejectedValueOnce(new Error('Error 1')).mockResolvedValue('success');
 
       const task = new EventTask(mockContext, handler, {
         maxRetries: 2,
@@ -350,12 +350,12 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('jitter retry strategy', () => {
     beforeEach(() => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      jest.spyOn(Math, 'random').mockReturnValue(0.5);
     });
 
     it('should apply jitter to retry delays', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockResolvedValue('success');
@@ -369,9 +369,9 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // First retry: 100 * 2^0 = 100 + (100 * 0.5 * 0.5) = 125ms
-      await vi.advanceTimersByTimeAsync(125);
+      await jest.advanceTimersByTimeAsync(125);
       // Second retry: 100 * 2^1 = 200 + (200 * 0.5 * 0.5) = 250ms
-      await vi.advanceTimersByTimeAsync(250);
+      await jest.advanceTimersByTimeAsync(250);
 
       const result = await promise;
 
@@ -382,8 +382,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('linear retry strategy', () => {
     it('should use linearly increasing delays', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockRejectedValueOnce(new Error('Error 3'))
@@ -397,9 +397,9 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
       const promise = task.execute();
 
-      await vi.advanceTimersByTimeAsync(100); // First retry
-      await vi.advanceTimersByTimeAsync(150); // Second retry
-      await vi.advanceTimersByTimeAsync(200); // Third retry
+      await jest.advanceTimersByTimeAsync(100); // First retry
+      await jest.advanceTimersByTimeAsync(150); // Second retry
+      await jest.advanceTimersByTimeAsync(200); // Third retry
 
       const result = await promise;
 
@@ -408,8 +408,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
     });
 
     it('should respect maxDelay in linear strategy', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockRejectedValueOnce(new Error('Error 3'))
@@ -423,10 +423,10 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
       const promise = task.execute();
 
-      await vi.advanceTimersByTimeAsync(100); // 100ms
-      await vi.advanceTimersByTimeAsync(200); // 200ms
-      await vi.advanceTimersByTimeAsync(250); // 250ms (capped)
-      await vi.advanceTimersByTimeAsync(250); // 250ms (capped)
+      await jest.advanceTimersByTimeAsync(100); // 100ms
+      await jest.advanceTimersByTimeAsync(200); // 200ms
+      await jest.advanceTimersByTimeAsync(250); // 250ms (capped)
+      await jest.advanceTimersByTimeAsync(250); // 250ms (capped)
 
       await promise;
 
@@ -436,13 +436,13 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('with custom retry conditions', () => {
     it('should use isRetryable to determine if retry should occur', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Network error'))
         .mockRejectedValueOnce(new Error('Database error'))
         .mockResolvedValue('success');
 
-      const isRetryable = vi.fn().mockImplementation((error: EventError) => {
+      const isRetryable = jest.fn<any>().mockImplementation((error: EventError) => {
         // Only retry on network errors, not database errors
         return error.message.includes('Network');
       });
@@ -455,7 +455,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       });
 
       const promise = task.execute();
-      await vi.advanceTimersByTimeAsync(100); // First retry delay
+      await jest.advanceTimersByTimeAsync(100); // First retry delay
 
       const result = await promise;
 
@@ -465,7 +465,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
     });
 
     it('should not retry when isRetryable returns false', async () => {
-      const handler = vi.fn().mockRejectedValueOnce(new Error('Permanent failure'));
+      const handler = jest.fn<any>().mockRejectedValueOnce(new Error('Permanent failure'));
 
       const task = new EventTask(mockContext, handler, {
         isRetryable: () => false, // Never retry
@@ -483,7 +483,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('integration with abort signal', () => {
     it('should cancel during retry delay with exponential strategy', async () => {
-      const handler = vi.fn().mockRejectedValue(new Error('Error'));
+      const handler = jest.fn<any>().mockRejectedValue(new Error('Error'));
 
       const controller = new AbortController();
       const task = new EventTask(mockContext, handler, {
@@ -495,7 +495,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // Start first retry delay
-      await vi.advanceTimersByTimeAsync(50);
+      await jest.advanceTimersByTimeAsync(50);
 
       // Cancel during delay
       controller.abort();
@@ -507,9 +507,9 @@ describe('EventTaskImpl with RetryStrategies', () => {
     });
 
     it('should cancel during jitter retry delay', async () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      jest.spyOn(Math, 'random').mockReturnValue(0.5);
 
-      const handler = vi.fn().mockRejectedValue(new Error('Error'));
+      const handler = jest.fn<any>().mockRejectedValue(new Error('Error'));
 
       const controller = new AbortController();
       const task = new EventTask(mockContext, handler, {
@@ -521,7 +521,7 @@ describe('EventTaskImpl with RetryStrategies', () => {
       const promise = task.execute();
 
       // Cancel before delay completes
-      await vi.advanceTimersByTimeAsync(50);
+      await jest.advanceTimersByTimeAsync(50);
       controller.abort();
 
       const result = await promise;
@@ -532,8 +532,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
   describe('state transitions with retry strategies', () => {
     it('should transition through correct states with exponential retry', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Error 1'))
         .mockRejectedValueOnce(new Error('Error 2'))
         .mockResolvedValue('success');
@@ -549,15 +549,15 @@ describe('EventTaskImpl with RetryStrategies', () => {
       });
 
       const promise = task.execute();
-      await vi.advanceTimersByTimeAsync(100); // First retry
-      await vi.advanceTimersByTimeAsync(200); // Second retry
+      await jest.advanceTimersByTimeAsync(100); // First retry
+      await jest.advanceTimersByTimeAsync(200); // Second retry
       await promise;
 
       expect(stateChanges).toEqual(['running', 'retrying', 'succeeded']);
     });
 
     it('should transition to failed when retries exhausted with linear strategy', async () => {
-      const handler = vi.fn().mockRejectedValue(new Error('Persistent error'));
+      const handler = jest.fn<any>().mockRejectedValue(new Error('Persistent error'));
 
       const stateChanges: EventState[] = [];
       const onStateChange = (state: EventState) => stateChanges.push(state);
@@ -570,8 +570,8 @@ describe('EventTaskImpl with RetryStrategies', () => {
       });
 
       const promise = task.execute();
-      await vi.advanceTimersByTimeAsync(100); // First retry
-      await vi.advanceTimersByTimeAsync(150); // Second retry
+      await jest.advanceTimersByTimeAsync(100); // First retry
+      await jest.advanceTimersByTimeAsync(150); // Second retry
       const result = await promise;
 
       expect(result.state).toBe('failed');
@@ -586,14 +586,14 @@ describe('EventTaskImpl with RetryStrategies', () => {
 
 describe('RetryConditions integration', () => {
   it('should work with empty RetryConditions object', async () => {
-    vi.useFakeTimers();
+    jest.useFakeTimers();
 
     // This test demonstrates that RetryConditions is available
     // but currently empty, so we use custom isRetryable functions
     // expect(RetryConditions).toBeDefined();
     // expect(typeof RetryConditions).toBe('object');
 
-    const handler = vi.fn().mockRejectedValueOnce(new Error('Error')).mockResolvedValue('success');
+    const handler = jest.fn<any>().mockRejectedValueOnce(new Error('Error')).mockResolvedValue('success');
 
     const task = new EventTask(mockContext, handler, {
       // Using custom retry condition since RetryConditions is empty
@@ -603,12 +603,12 @@ describe('RetryConditions integration', () => {
     });
 
     const promise = task.execute();
-    await vi.advanceTimersByTimeAsync(100);
+    await jest.advanceTimersByTimeAsync(100);
     const result = await promise;
 
     expect(result.state).toBe('succeeded');
 
-    vi.clearAllTimers();
+    jest.clearAllTimers();
   });
 });
 
@@ -729,9 +729,12 @@ describe('RetryConditions', () => {
 
   describe('integration with EventTaskImpl', () => {
     it('should use onTransientError condition for rate limit', async () => {
-      vi.useFakeTimers();
+      jest.useFakeTimers();
 
-      const handler = vi.fn().mockRejectedValueOnce(new Error('Rate limit exceeded')).mockResolvedValue('success');
+      const handler = jest
+        .fn<any>()
+        .mockRejectedValueOnce(new Error('Rate limit exceeded'))
+        .mockResolvedValue('success');
 
       const task = new EventTask(mockContext, handler, {
         isRetryable: RetryConditions.onTransientError,
@@ -740,17 +743,17 @@ describe('RetryConditions', () => {
       });
 
       const promise = task.execute();
-      await vi.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(100);
       const result = await promise;
 
       expect(result.state).toBe('succeeded');
       expect(handler).toHaveBeenCalledTimes(2);
 
-      vi.clearAllTimers();
+      jest.clearAllTimers();
     });
 
     it('should not retry on client errors with unlessClientError', async () => {
-      const handler = vi.fn().mockRejectedValueOnce(new Error('Bad request: invalid parameters'));
+      const handler = jest.fn<any>().mockRejectedValueOnce(new Error('Bad request: invalid parameters'));
 
       const task = new EventTask(mockContext, handler, {
         isRetryable: RetryConditions.unlessClientError,
@@ -764,8 +767,8 @@ describe('RetryConditions', () => {
     });
 
     it('should combine conditions for complex logic', async () => {
-      const handler = vi
-        .fn()
+      const handler = jest
+        .fn<any>()
         .mockRejectedValueOnce(new Error('Database connection failed'))
         .mockResolvedValue('success');
 
@@ -779,7 +782,7 @@ describe('RetryConditions', () => {
       });
 
       const promise = task.execute();
-      await vi.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(100);
       const result = await promise;
 
       expect(result.state).toBe('succeeded');

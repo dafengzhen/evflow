@@ -106,7 +106,7 @@ export class PerfMonitorPlugin<
     this.reset();
   }
 
-  private monitor(): EventMiddleware<EM, keyof EM, any, GC> {
+  private monitor(): EventMiddleware<EM, any, any, GC> {
     return async (_, next, info) => {
       const start = now();
       let succeeded = true;

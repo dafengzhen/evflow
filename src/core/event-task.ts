@@ -16,12 +16,21 @@ import type {
 export class EventTask<R = unknown> implements IEventTask<R> {
   constructor(
     private readonly context: EventContext,
-    private readonly handler: EventHandler,
+    private readonly handler: EventHandler<any, any, any, any>,
     private readonly options: EventTaskOptions = {},
   ) {}
 
   async execute(): Promise<EventEmitResult<R>> {
-    const { isRetryable, maxRetries = 0, onRetry, onStateChange, retryDelay = 0, signal } = this.options;
+    const {
+      isRetryable,
+      maxRetries = 0,
+      onRetry,
+      onStateChange,
+      onTimeout,
+      retryDelay = 0,
+      signal,
+      timeout,
+    } = this.options;
 
     let attempt = 0;
     let state: EventState = 'pending';
@@ -45,6 +54,10 @@ export class EventTask<R = unknown> implements IEventTask<R> {
           return this.createResult('succeeded', result);
         } catch (error) {
           const eventError = this.normalizeError(error);
+
+          if (eventError.code === 'TIMEOUT' && timeout && onTimeout) {
+            onTimeout(timeout, 'handler-execution');
+          }
 
           if (eventError.code === 'CANCELLED') {
             setState('cancelled');
@@ -126,13 +139,18 @@ export class EventTask<R = unknown> implements IEventTask<R> {
   }
 
   private async runWithTimeout(): Promise<R> {
-    const { signal, timeout } = this.options;
+    const { signal, timeout, onTimeout } = this.options;
     if (!timeout && !signal) {
       return this.handler(this.context) as Promise<R>;
     }
 
     return new Promise<R>((resolve, reject) => {
-      const timer = timeout && setTimeout(() => reject(this.createError('TIMEOUT', 'Task timed out')), timeout);
+      const timer =
+        timeout &&
+        setTimeout(() => {
+          onTimeout?.(timeout, 'handler-execution');
+          reject(this.createError('TIMEOUT', `Task timed out after ${timeout}ms`));
+        }, timeout);
 
       const onAbort = () => {
         cleanup();
