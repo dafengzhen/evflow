@@ -370,7 +370,7 @@ describe('EventTaskImpl', () => {
       const result = await task.execute();
 
       expect(result.error?.code).toBe('UNKNOWN');
-      expect(result.error?.message).toBe('[object Object]');
+      expect(result.error?.message).toBe('{"someProperty":"value"}');
     });
   });
 
