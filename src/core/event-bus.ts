@@ -47,13 +47,13 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
 
   private readonly handlers = new Map<string, Array<HandlerWrapper<EM, any, any, GC>>>();
 
-  private readonly installedPlugins: Array<InstalledPlugin<EM, GC>> = [];
-
   private readonly middlewares = new Map<string, Array<MiddlewareWrapper<EM, any, any, GC>>>();
 
   private readonly patternHandlers = new Map<string, Array<HandlerWrapper<EM, any, any, GC>>>();
 
   private readonly patternMiddlewares = new Map<string, Array<MiddlewareWrapper<EM, any, any, GC>>>();
+
+  private readonly installedPlugins: Array<InstalledPlugin<EM, GC>> = [];
 
   private readonly patternOptions: Required<PatternMatchingOptions>;
 
@@ -69,9 +69,9 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
   }
 
   destroy(): void {
-    this.lifecycleManager.destroy().catch((error) => {
-      console.error('Error during lifecycle manager destruction:', error);
-    });
+    void this.lifecycleManager
+      .destroy()
+      .catch((error) => console.error('Error during lifecycle manager destruction:', error));
 
     this.uninstallAllPlugins();
     this.handlers.clear();
@@ -163,9 +163,7 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
 
     this.addToMapSorted(targetMap, eventStr, wrapper, sortByPriorityDesc, (w) => w.middleware);
 
-    return () => {
-      this.removeFromMapByIdentity(targetMap, eventStr, (w) => w.middleware === middleware);
-    };
+    return () => this.removeFromMapByIdentity(targetMap, eventStr, (w) => w.middleware === middleware);
   }
 
   useGlobalMiddleware<R = unknown>(
@@ -179,16 +177,16 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
       throwOnEventError: options?.throwOnEventError ?? DEFAULT_THROW_ON_EVENT_ERROR,
     };
 
-    const index = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
-    if (index === -1) {
+    const idx = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
+    if (idx === -1) {
       this.globalMiddlewares.push(wrapper);
       this.globalMiddlewares.sort(sortByPriorityDesc);
     }
 
     return () => {
-      const idx = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
-      if (idx !== -1) {
-        this.globalMiddlewares.splice(idx, 1);
+      const i = this.globalMiddlewares.findIndex((w) => w.middleware === middleware);
+      if (i !== -1) {
+        this.globalMiddlewares.splice(i, 1);
       }
     };
   }
@@ -204,8 +202,8 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     return () => {
       const idx = this.installedPlugins.findIndex((p) => p.plugin === plugin);
       if (idx !== -1) {
-        const [installedPlugin] = this.installedPlugins.splice(idx, 1);
-        void this.safeUninstall(installedPlugin.plugin);
+        const [installed] = this.installedPlugins.splice(idx, 1);
+        void this.safeUninstall(installed.plugin);
       }
     };
   }
@@ -234,6 +232,20 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     arr.sort(comparator);
   }
 
+  private removeFromMapByIdentity<T>(map: Map<string, T[]>, key: string, identity: (w: T) => boolean): void {
+    const arr = map.get(key);
+    if (!arr) {
+      return;
+    }
+
+    const filtered = arr.filter((w) => !identity(w));
+    if (filtered.length === 0) {
+      map.delete(key);
+    } else {
+      map.set(key, filtered);
+    }
+  }
+
   private cleanupOnceHandlers<K extends StringKeyOf<EM>>(
     event: K,
     handlers: Array<HandlerWrapper<EM, K, any, GC>>,
@@ -243,9 +255,9 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
       return;
     }
 
-    for (const handlerWrapper of onceHandlers) {
-      this.off(event, handlerWrapper.handler as EventHandler<EM, K, any, GC>);
-      this.unmatchAllHandlers(handlerWrapper.handler);
+    for (const wrapper of onceHandlers) {
+      this.off(event, wrapper.handler as EventHandler<EM, K, any, GC>);
+      this.unmatchAllHandlers(wrapper.handler);
     }
   }
 
@@ -286,7 +298,7 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
               ...context.meta,
               lifecyclePhase: LifecyclePhase.TIMEOUT,
             };
-            this.lifecycleManager.onTimeout(
+            void this.lifecycleManager.onTimeout(
               context.meta?.eventName as any,
               context,
               timeout,
@@ -315,7 +327,7 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
           handlerWrapper.handler,
           result,
           handlerIndex,
-          results?.length || 0,
+          results?.length ?? 0,
         );
 
         if (options.stopOnError && result.error) {
@@ -335,12 +347,13 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
           handlerWrapper.handler,
           failedResult,
           handlerIndex,
-          results?.length || 0,
+          results?.length ?? 0,
         );
 
         if (options.stopOnError) {
           stopFlag!.value = true;
         }
+
         await this.handleEventResultError(failedResult, eventMiddlewares, context);
       }
     };
@@ -559,7 +572,14 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     }
 
     return new Promise<T>((resolve, reject) => {
+      let finished = false;
+
       const timer = setTimeout(async () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+
         const timeoutError = new Error(`Operation timed out after ${timeout}ms`);
 
         if (event && context && phase) {
@@ -567,16 +587,33 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
             ...context.meta,
             lifecyclePhase: LifecyclePhase.TIMEOUT,
           };
-          await this.lifecycleManager.onTimeout(event as any, context, timeout, phase);
+          try {
+            await this.lifecycleManager.onTimeout(event as any, context, timeout, phase);
+          } catch (e) {
+            console.error('Error in lifecycle onTimeout handler:', e);
+          }
         }
 
         reject(timeoutError);
       }, timeout);
 
       promise
-        .then(resolve)
-        .catch(reject)
-        .finally(() => clearTimeout(timer));
+        .then((res) => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          clearTimeout(timer);
+          resolve(res);
+        })
+        .catch((err) => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          clearTimeout(timer);
+          reject(err);
+        });
     });
   }
 
@@ -590,9 +627,9 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     event: string,
     context: EventContext<EM[K], GC>,
   ): Array<MiddlewareWrapper<EM, K, any, GC>> {
-    const exactMiddlewares = (this.middlewares.get(event) ?? []) as Array<MiddlewareWrapper<EM, K, any, GC>>;
-    const patternMiddlewares = this.getMatchingFromMap(this.patternMiddlewares, event);
-    const combined = [...exactMiddlewares, ...patternMiddlewares];
+    const exact = (this.middlewares.get(event) ?? []) as Array<MiddlewareWrapper<EM, K, any, GC>>;
+    const pattern = this.getMatchingFromMap(this.patternMiddlewares, event);
+    const combined = [...exact, ...pattern];
     return this.deduplicateMiddlewares(combined).filter((mw) => !mw.filter || mw.filter(context));
   }
 
@@ -636,12 +673,11 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
   ): Promise<void> {
     const error = result.error?.error instanceof Error ? result.error.error : new Error(result.error?.message);
 
-    const applicableMiddlewares = this.globalMiddlewares
+    const applicableGlobal = this.globalMiddlewares
       .filter((mw) => !mw.filter || mw.filter(context))
       .sort(sortByPriorityAsc);
 
-    const allMiddlewares = [...eventMiddlewares, ...applicableMiddlewares];
-
+    const allMiddlewares = [...eventMiddlewares, ...applicableGlobal];
     for (const middleware of allMiddlewares) {
       if (middleware.throwOnEventError) {
         throw error;
@@ -752,8 +788,8 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     const currentPattern = patternParts[patternIndex];
 
     if (currentPattern === doubleWildcard) {
-      const hasMorePatterns = patternIndex < patternParts.length - 1;
-      if (!hasMorePatterns) {
+      const hasMore = patternIndex < patternParts.length - 1;
+      if (!hasMore) {
         return true;
       }
 
@@ -896,20 +932,6 @@ export class EventBus<EM extends EventMap = EventMap, GC extends PlainObject = P
     this.addToMapSorted(targetMap, String(key), wrapper, sortByPriorityDesc, (w) => w.handler);
 
     return () => this.unregisterHandler(targetMap, key, handler);
-  }
-
-  private removeFromMapByIdentity<T>(map: Map<string, T[]>, key: string, identity: (w: T) => boolean): void {
-    const arr = map.get(key);
-    if (!arr) {
-      return;
-    }
-
-    const filtered = arr.filter((w) => !identity(w));
-    if (filtered.length === 0) {
-      map.delete(key);
-    } else {
-      map.set(key, filtered);
-    }
   }
 
   private async safeUninstall(plugin: EventBusPlugin<EM, GC>): Promise<void> {
