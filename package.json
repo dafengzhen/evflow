@@ -1,158 +1,151 @@
 {
-  "name": "evflow",
-  "version": "0.1.33",
-  "description": "`EventBus` is a lightweight, TypeScript-first event system with **async task handling**, **retries**, **timeouts**, and **cancellation support**.",
-  "source": "./src/index.ts",
-  "types": "./dist/types/index.d.ts",
-  "type": "module",
-  "exports": {
-    ".": {
-      "import": {
-        "default": "./dist/esm/modern/index.js"
-      },
-      "require": {
-        "default": "./dist/cjs/modern/index.js"
-      }
-    }
-  },
-  "scripts": {
-    "watch": "parcel watch",
-    "build": "parcel build",
-    "format": "prettier --write .",
-    "lint": "eslint . --fix",
-    "prepare": "husky install",
-    "test": "jest"
-  },
-  "files": [
-    "dist"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/dafengzhen/evflow.git"
-  },
-  "homepage": "https://github.com/dafengzhen/evflow#readme",
-  "bugs": {
-    "url": "https://github.com/dafengzhen/evflow/issues"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.28.4",
-    "@babel/preset-env": "^7.28.3",
-    "@babel/preset-typescript": "^7.27.1",
-    "@commitlint/cli": "^20.1.0",
-    "@commitlint/config-conventional": "^20.0.0",
-    "@commitlint/prompt-cli": "^20.1.0",
-    "@eslint/js": "^9.37.0",
-    "@jest/globals": "^30.2.0",
-    "@parcel/packager-ts": "^2.16.0",
-    "@parcel/transformer-typescript-types": "^2.16.0",
-    "@types/node": "^24.8.0",
-    "babel-jest": "^30.2.0",
-    "eslint": "^9.37.0",
-    "globals": "^16.4.0",
-    "husky": "^9.1.7",
-    "jest": "^30.2.0",
-    "jest-environment-jsdom": "^30.2.0",
-    "parcel": "^2.16.0",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.1"
-  },
-  "dependencies": {
-    "@swc/helpers": "^0.5.17",
-    "browserslist-config-baseline": "^0.5.0"
-  },
-  "targets": {
-    "modern-esm": {
-      "distDir": "./dist/esm/modern",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": true,
-      "outputFormat": "esmodule"
-    },
-    "modern-esm-dev": {
-      "distDir": "./dist/esm/modern-dev",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": false,
-      "outputFormat": "esmodule"
-    },
-    "modern-cjs": {
-      "distDir": "./dist/cjs/modern",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": true,
-      "outputFormat": "commonjs"
-    },
-    "modern-cjs-dev": {
-      "distDir": "./dist/cjs/modern-dev",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": false,
-      "outputFormat": "commonjs"
-    },
-    "legacy-esm": {
-      "distDir": "./dist/esm/legacy",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": true,
-      "outputFormat": "esmodule",
-      "engines": {
-        "browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
-      }
-    },
-    "legacy-esm-dev": {
-      "distDir": "./dist/esm/legacy-dev",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": false,
-      "outputFormat": "esmodule",
-      "engines": {
-        "browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
-      }
-    },
-    "legacy-cjs": {
-      "distDir": "./dist/cjs/legacy",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": true,
-      "outputFormat": "commonjs",
-      "engines": {
-        "browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
-      }
-    },
-    "legacy-cjs-dev": {
-      "distDir": "./dist/cjs/legacy-dev",
-      "isLibrary": true,
-      "includeNodeModules": true,
-      "sourceMap": true,
-      "optimize": false,
-      "outputFormat": "commonjs",
-      "engines": {
-        "browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
-      }
-    }
-  },
-  "keywords": [
-    "evflow",
-    "event",
-    "flow",
-    "tool",
-    "biz"
-  ],
-  "author": "dafengzhen",
-  "license": "MIT",
-  "lint-staged": {
-    "**/*": [
-      "npm run format",
-      "npm run lint",
-      "npm run test"
-    ]
-  }
+	"name": "evflow",
+	"version": "0.1.34",
+	"description": "`EventBus` is a lightweight, TypeScript-first event system with **async task handling**, **retries**, **timeouts**, and **cancellation support**.",
+	"source": "./src/index.ts",
+	"types": "./dist/types/index.d.ts",
+	"type": "module",
+	"exports": {
+		".": {
+			"import": {
+				"default": "./dist/esm/modern/index.js"
+			},
+			"require": {
+				"default": "./dist/cjs/modern/index.js"
+			}
+		}
+	},
+	"scripts": {
+		"watch": "parcel watch",
+		"build": "parcel build",
+		"format": "biome format --write",
+		"lint": "biome lint --write --unsafe",
+		"prepare": "husky install",
+		"test": "jest"
+	},
+	"files": [
+		"dist"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dafengzhen/evflow.git"
+	},
+	"homepage": "https://github.com/dafengzhen/evflow#readme",
+	"bugs": {
+		"url": "https://github.com/dafengzhen/evflow/issues"
+	},
+	"devDependencies": {
+		"@babel/core": "^7.28.4",
+		"@babel/preset-env": "^7.28.3",
+		"@babel/preset-typescript": "^7.27.1",
+		"@biomejs/biome": "2.2.6",
+		"@commitlint/cli": "^20.1.0",
+		"@commitlint/config-conventional": "^20.0.0",
+		"@commitlint/prompt-cli": "^20.1.0",
+		"@jest/globals": "^30.2.0",
+		"@parcel/packager-ts": "^2.16.0",
+		"@parcel/transformer-typescript-types": "^2.16.0",
+		"@types/node": "^24.8.0",
+		"babel-jest": "^30.2.0",
+		"husky": "^9.1.7",
+		"jest": "^30.2.0",
+		"jest-environment-jsdom": "^30.2.0",
+		"parcel": "^2.16.0",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.9.3"
+	},
+	"dependencies": {
+		"@swc/helpers": "^0.5.17",
+		"browserslist-config-baseline": "^0.5.0"
+	},
+	"targets": {
+		"modern-esm": {
+			"distDir": "./dist/esm/modern",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": true,
+			"outputFormat": "esmodule"
+		},
+		"modern-esm-dev": {
+			"distDir": "./dist/esm/modern-dev",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": false,
+			"outputFormat": "esmodule"
+		},
+		"modern-cjs": {
+			"distDir": "./dist/cjs/modern",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": true,
+			"outputFormat": "commonjs"
+		},
+		"modern-cjs-dev": {
+			"distDir": "./dist/cjs/modern-dev",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": false,
+			"outputFormat": "commonjs"
+		},
+		"legacy-esm": {
+			"distDir": "./dist/esm/legacy",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": true,
+			"outputFormat": "esmodule",
+			"engines": {
+				"browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
+			}
+		},
+		"legacy-esm-dev": {
+			"distDir": "./dist/esm/legacy-dev",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": false,
+			"outputFormat": "esmodule",
+			"engines": {
+				"browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
+			}
+		},
+		"legacy-cjs": {
+			"distDir": "./dist/cjs/legacy",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": true,
+			"outputFormat": "commonjs",
+			"engines": {
+				"browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
+			}
+		},
+		"legacy-cjs-dev": {
+			"distDir": "./dist/cjs/legacy-dev",
+			"isLibrary": true,
+			"includeNodeModules": true,
+			"sourceMap": true,
+			"optimize": false,
+			"outputFormat": "commonjs",
+			"engines": {
+				"browsers": ">0.3%, Chrome >= 87, ChromeAndroid >= 87, Edge >= 87, Firefox >= 83, FirefoxAndroid >= 83, Safari >= 14, iOS >= 14"
+			}
+		}
+	},
+	"keywords": [
+		"event",
+		"tool",
+		"biz"
+	],
+	"author": "dafengzhen",
+	"license": "MIT",
+	"lint-staged": {
+		"*": [
+			"biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true"
+		]
+	}
 }

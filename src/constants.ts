@@ -13,10 +13,10 @@ export const DEFAULT_PRIORITY = 0;
 export const DEFAULT_THROW_ON_EVENT_ERROR = false;
 
 export const DEFAULT_PATTERN_OPTIONS: Required<PatternMatchingOptions> = {
-  allowZeroLengthDoubleWildcard: false,
-  matchMultiple: false,
-  separator: '.',
-  wildcard: '*',
+	allowZeroLengthDoubleWildcard: false,
+	matchMultiple: false,
+	separator: '.',
+	wildcard: '*',
 };
 
 export const COMMON_WILDCARD_CHARS = new Set(['#', '*', '+', '?']);

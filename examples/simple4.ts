@@ -6,13 +6,13 @@ const perfPlugin = new PerfMonitorPlugin({ reportIntervalMs: 5000 });
 bus.usePlugin(perfPlugin);
 
 bus.on('testEvent', async () => {
-  console.log('Handler 1 start');
-  return 123;
+	console.log('Handler 1 start');
+	return 123;
 });
 
 bus.on('testEvent', async () => {
-  console.log('Handler 2 start');
-  throw new Error('Failing handler');
+	console.log('Handler 2 start');
+	throw new Error('Failing handler');
 });
 
 await bus.emit('testEvent');
