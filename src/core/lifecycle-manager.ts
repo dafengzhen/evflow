@@ -1,3 +1,4 @@
+import type { LifecyclePhase } from '../enums.ts';
 import type {
 	EventBusLifecycleHooks,
 	EventContext,
@@ -10,7 +11,6 @@ import type {
 	PlainObject,
 	StringKeyOf,
 } from '../types/types.ts';
-import type { LifecyclePhase } from '../enums.ts';
 
 /**
  * LifecycleManager.

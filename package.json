@@ -18,8 +18,7 @@
 	"scripts": {
 		"watch": "parcel watch",
 		"build": "parcel build",
-		"format": "biome format --write",
-		"lint": "biome lint --write --unsafe",
+		"check": "biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true",
 		"prepare": "husky install",
 		"test": "jest"
 	},
@@ -145,7 +144,7 @@
 	"license": "MIT",
 	"lint-staged": {
 		"*": [
-			"biome check --write --unsafe --no-errors-on-unmatched --files-ignore-unknown=true"
+			"npm run check"
 		]
 	}
 }

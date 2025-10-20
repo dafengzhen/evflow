@@ -6,10 +6,8 @@ import {
 	it,
 	jest,
 } from '@jest/globals';
-
-import type { EventError, EventState } from './types/types.ts';
-
 import { EventTask } from './core/index.ts';
+import type { EventError, EventState } from './types/types.ts';
 import { RetryConditions, RetryStrategies } from './utils.ts';
 
 const mockContext = {

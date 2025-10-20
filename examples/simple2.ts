@@ -1,6 +1,5 @@
-import type { EventMap } from '../src/types/types.ts';
-
 import { EventBus } from '../src/index.ts';
+import type { EventMap } from '../src/types/types.ts';
 
 interface MyEventMap extends EventMap {
 	numberEvent: { value: number };

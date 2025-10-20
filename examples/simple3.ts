@@ -1,7 +1,6 @@
-import type { EventMap } from '../src/types/types.ts';
-
 import { EventBusFactory as factory } from '../src/core/event-bus-factory.ts';
 import { LoggerPlugin } from '../src/index.ts';
+import type { EventMap } from '../src/types/types.ts';
 
 interface MyEvents extends EventMap {
 	'user:login': { username: string };
