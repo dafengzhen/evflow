@@ -1,7 +1,7 @@
 {
 	"name": "evflow",
-	"version": "0.1.36",
-	"description": "`EventBus` is a lightweight, TypeScript-first event system with **async task handling**, **retries**, **timeouts**, and **cancellation support**.",
+	"version": "0.1.37",
+	"description": "A fully type-safe, feature-rich event system built with TypeScript, supporting",
 	"source": "./src/index.ts",
 	"types": "./dist/types/index.d.ts",
 	"type": "module",
