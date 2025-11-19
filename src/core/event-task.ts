@@ -1,317 +1,269 @@
 import type {
+	BaseEventDefinitions,
+	EmitOptions,
 	EventContext,
-	EventEmitResult,
-	EventError,
-	EventHandler,
+	EventListener,
+	EventName,
+	EventPayload,
 	EventState,
 	EventTaskOptions,
 	IEventTask,
-	NormalizedEventTaskOptions,
-} from '../types/types.ts';
+} from './event.d.ts';
 
-/**
- * EventTask.
- *
- * @author dafengzhen
- */
-export class EventTask<R = unknown> implements IEventTask<R> {
-	private readonly originalContext: EventContext;
+export class TaskError extends Error {
+	readonly code: string;
 
-	private readonly handler: EventHandler<any, any, any, any>;
+	constructor(code: string, message: string) {
+		super(message);
+		this.code = code;
+		this.name = 'TaskError';
+	}
+}
 
-	private readonly opts: NormalizedEventTaskOptions;
+export class TaskCancelledError extends TaskError {
+	constructor(message = 'Task was cancelled') {
+		super('CANCELLED', message);
+		this.name = 'TaskCancelledError';
+	}
+}
+
+export class TaskTimeoutError extends TaskError {
+	readonly timeout: number;
+
+	constructor(timeout: number, message?: string) {
+		super('TIMEOUT', message ?? `Task timed out after ${timeout}ms`);
+		this.timeout = timeout;
+		this.name = 'TaskTimeoutError';
+	}
+}
+
+export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
+	implements IEventTask<T, K>
+{
+	private readonly payload: EventPayload<T, K>;
+
+	private readonly context: EventContext<T, K>;
+
+	private readonly handler: EventListener<T, K>;
+
+	private readonly options: EventTaskOptions<T, K>;
 
 	constructor(
-		context: EventContext,
-		handler: EventHandler<any, any, any, any>,
-		options: EventTaskOptions = {},
+		payload: EventPayload<T, K>,
+		context: EventContext<T, K>,
+		handler: EventListener<T, K>,
+		options: EmitOptions<T, K>,
 	) {
-		this.originalContext = context;
+		this.payload = payload;
+		this.context = context;
 		this.handler = handler;
-		this.opts = this.normalizeOptions(options);
+		this.options = {
+			isRetryable: options.isRetryable ?? (() => false),
+			maxRetries: Math.max(0, options.maxRetries ?? 0),
+			onRetry: options.onRetry ?? (() => {}),
+			onStateChange: options.onStateChange ?? (() => {}),
+			onCancel: options.onCancel ?? (() => {}),
+			onTimeout: options.onTimeout ?? (() => {}),
+			retryDelay: options.retryDelay ?? 0,
+			signal: options.signal,
+			timeout: Math.max(0, options.timeout ?? 0),
+			throwOnError: options.throwOnError ?? false,
+			__eventName__: options.__eventName__,
+		};
 	}
 
-	async execute(): Promise<EventEmitResult<R>> {
+	async execute(): Promise<void> {
 		let attempt = 0;
 		let state: EventState = 'pending';
 
 		const setState = (newState: EventState) => {
 			if (state !== newState) {
 				state = newState;
-				this.safeCall(() => this.opts.onStateChange(newState));
+				this.options.onStateChange(newState);
 			}
 		};
 
-		try {
-			setState('running');
+		while (true) {
+			try {
+				if (this.isCancelled()) {
+					// noinspection ExceptionCaughtLocallyJS
+					throw new TaskCancelledError();
+				}
 
-			while (attempt <= this.opts.maxRetries) {
-				this.throwIfCancelled();
+				setState(attempt === 0 ? 'running' : 'retrying');
 
-				try {
-					const result = await this.executeHandlerWithTimeout();
-					setState('succeeded');
-					return this.createSuccessResult(result);
-				} catch (rawError) {
-					const error = this.normalizeError(rawError);
+				await this.executeHandlerWithTimeout();
 
-					if (error.code === 'TIMEOUT') {
-						this.safeCall(() =>
-							this.opts.onTimeout(this.opts.timeout, 'handler-execution'),
-						);
+				setState('succeeded');
+
+				break;
+			} catch (err) {
+				if (err instanceof TaskCancelledError) {
+					setState('cancelled');
+					this.options.onCancel();
+
+					if (this.options.throwOnError) {
+						throw err;
+					} else {
+						break;
 					}
+				}
 
-					if (error.code === 'CANCELLED') {
-						setState('cancelled');
-						return this.createCancelledResult(error);
+				if (err instanceof TaskTimeoutError) {
+					setState('timeout');
+					this.options.onTimeout(this.options.timeout);
+				}
+
+				if (!this.shouldRetry(attempt, err)) {
+					setState('failed');
+
+					if (this.options.throwOnError) {
+						throw err;
+					} else {
+						break;
 					}
+				}
 
-					if (!this.shouldRetry(attempt, error)) {
-						setState('failed');
-						return this.createFailedResult(error);
-					}
+				attempt++;
+				this.options.onRetry(attempt, err);
 
-					attempt++;
-					setState('retrying');
-					this.safeCall(() => this.opts.onRetry(attempt, error));
-
-					const delay = this.calculateRetryDelay(attempt);
-					if (delay > 0) {
+				const delay = this.calculateRetryDelay(attempt);
+				if (delay > 0) {
+					try {
 						await this.waitWithCancellation(delay);
+					} catch (waitErr) {
+						if (waitErr instanceof TaskCancelledError) {
+							setState('cancelled');
+							this.options.onCancel();
+
+							if (this.options.throwOnError) {
+								throw waitErr;
+							} else {
+								break;
+							}
+						}
+						throw waitErr;
 					}
 				}
 			}
-
-			setState('failed');
-			return this.createFailedResult(
-				this.createError('UNKNOWN', 'Max retries exceeded'),
-			);
-		} catch (rawError) {
-			const error = this.normalizeError(rawError);
-			if (error.code === 'CANCELLED') {
-				setState('cancelled');
-				return this.createCancelledResult(error);
-			}
-			setState('failed');
-			return this.createFailedResult(error);
 		}
 	}
 
-	private normalizeOptions(
-		options: EventTaskOptions,
-	): NormalizedEventTaskOptions {
-		return {
-			isRetryable: options.isRetryable ?? (() => true),
-			maxRetries: Math.max(0, options.maxRetries ?? 0),
-			onRetry: options.onRetry ?? (() => {}),
-			onStateChange: options.onStateChange ?? (() => {}),
-			onTimeout: options.onTimeout ?? (() => {}),
-			retryDelay: options.retryDelay ?? 0,
-			signal: options.signal ?? undefined,
-			timeout: Math.max(0, options.timeout ?? 0),
+	private createExtendedContext(signal?: AbortSignal): EventContext<T, K> {
+		if (!signal) {
+			return this.context;
+		}
+
+		const base = (this.context ?? {}) as Record<string, unknown> & {
+			signal?: AbortSignal;
 		};
-	}
 
-	private createExtendedContext(): EventContext & { signal?: AbortSignal } {
-		const originalContext = this.originalContext;
-		const opts = this.opts;
 		return {
-			...originalContext,
-			meta: originalContext.meta ?? {},
-			signal: opts.signal,
-		};
+			...base,
+			signal,
+		} as EventContext<T, K>;
 	}
 
-	private safeCall(callback: () => void): void {
-		try {
-			callback();
-		} catch (_err) {}
-	}
-
-	private shouldRetry(attempt: number, error: EventError): boolean {
-		return attempt < this.opts.maxRetries && this.opts.isRetryable(error);
+	private shouldRetry(attempt: number, error: unknown): boolean {
+		return attempt < this.options.maxRetries && this.options.isRetryable(error);
 	}
 
 	private calculateRetryDelay(attempt: number): number {
-		const { retryDelay } = this.opts;
-		return Math.max(
-			0,
-			typeof retryDelay === 'function' ? retryDelay(attempt) : retryDelay,
-		);
-	}
-
-	private createSuccessResult(result: R): EventEmitResult<R> {
-		return { state: 'succeeded', result, error: undefined };
-	}
-
-	private createFailedResult(error: EventError): EventEmitResult<R> {
-		return { state: 'failed', result: undefined, error };
-	}
-
-	private createCancelledResult(error: EventError): EventEmitResult<R> {
-		return { state: 'cancelled', result: undefined, error };
+		const d = this.options.retryDelay;
+		return Math.max(0, typeof d === 'function' ? d(attempt) : d);
 	}
 
 	private isCancelled(): boolean {
-		return this.opts.signal?.aborted ?? false;
+		return this.options.signal?.aborted ?? false;
 	}
 
-	private throwIfCancelled(): void {
-		if (this.isCancelled()) {
-			throw this.createError('CANCELLED', 'Task was cancelled');
-		}
-	}
+	private executeHandlerWithTimeout(): Promise<void> {
+		const { timeout, signal: outer } = this.options;
 
-	private createError(
-		code: string,
-		message: string,
-		originalError?: unknown,
-	): EventError {
-		return {
-			code,
-			message,
-			error: originalError,
-			stack: originalError instanceof Error ? originalError.stack : undefined,
-		};
-	}
-
-	private normalizeError(error: unknown): EventError {
-		if (this.isEventError(error)) {
-			return error;
-		}
-
-		if (error instanceof Error) {
-			return {
-				code: (error as any).code ?? 'UNKNOWN',
-				message: error.message,
-				error,
-				stack: error.stack,
-			};
-		}
-
-		if (error && typeof error === 'object') {
-			const objError = error as Record<string, unknown>;
-			let message: string;
-
-			if (typeof objError.message === 'string') {
-				message = objError.message;
-			} else {
-				try {
-					message = JSON.stringify(objError);
-				} catch {
-					message = String(objError.toString?.() ?? 'Unknown error');
-				}
-			}
-
-			return {
-				code: String(objError.code ?? 'UNKNOWN'),
-				message,
-				error,
-				stack: typeof objError.stack === 'string' ? objError.stack : '',
-			};
-		}
-
-		return {
-			code: 'UNKNOWN',
-			message: String(error ?? 'Unknown error'),
-			error,
-			stack: '',
-		};
-	}
-
-	private isEventError(error: unknown): error is EventError {
-		return (
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			'message' in error
-		);
-	}
-
-	private async executeHandlerWithTimeout(): Promise<R> {
-		const extendedContext = this.createExtendedContext();
-
-		if (!this.opts.timeout && !this.opts.signal) {
-			return await Promise.resolve(this.handler(extendedContext));
+		if (!timeout && !outer) {
+			return Promise.resolve(this.handler(this.payload, this.context));
 		}
 
 		const controller = new AbortController();
-		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const inner = controller.signal;
+
+		let timeoutId: ReturnType<typeof setTimeout> | null = null;
+		let outerHandler: (() => void) | null = null;
+
+		if (outer) {
+			outerHandler = () => controller.abort();
+			outer.addEventListener('abort', outerHandler);
+		}
+
+		if (timeout > 0) {
+			timeoutId = setTimeout(() => controller.abort(), timeout);
+		}
+
+		const ctx = this.createExtendedContext(inner);
 
 		const cleanup = () => {
-			if (timeoutId !== undefined) {
+			if (timeoutId !== null) {
 				clearTimeout(timeoutId);
-				timeoutId = undefined;
 			}
-			this.opts.signal?.removeEventListener('abort', handleAbort);
+
+			if (outer && outerHandler) {
+				outer.removeEventListener('abort', outerHandler);
+			}
 		};
 
-		const handleAbort = () => {
-			cleanup();
-			controller.abort();
-		};
-
-		if (this.opts.timeout > 0) {
-			timeoutId = setTimeout(() => {
-				if (!controller.signal.aborted) {
-					controller.abort();
+		return new Promise<void>((resolve, reject) => {
+			const onAbort = () => {
+				cleanup();
+				if (outer?.aborted) {
+					reject(new TaskCancelledError());
+				} else {
+					reject(new TaskTimeoutError(timeout));
 				}
-			}, this.opts.timeout);
-		}
+			};
 
-		this.opts.signal?.addEventListener('abort', handleAbort);
+			inner.addEventListener('abort', onAbort, { once: true });
 
-		try {
-			return await Promise.race([
-				Promise.resolve(this.handler(extendedContext)),
-				new Promise<never>((_, reject) => {
-					controller.signal.addEventListener(
-						'abort',
-						() => {
-							cleanup();
-							reject(
-								this.opts.signal?.aborted
-									? this.createError('CANCELLED', 'Task was cancelled')
-									: this.createError(
-											'TIMEOUT',
-											`Task timed out after ${this.opts.timeout}ms`,
-										),
-							);
-						},
-						{ once: true },
-					);
-				}),
-			]);
-		} finally {
-			cleanup();
-		}
+			Promise.resolve(this.handler(this.payload, ctx)).then(
+				(val) => {
+					cleanup();
+					resolve(val);
+				},
+				(err) => {
+					cleanup();
+					reject(err);
+				},
+			);
+		});
 	}
 
-	private async waitWithCancellation(ms: number): Promise<void> {
-		if (ms <= 0) {
-			this.throwIfCancelled();
-			return;
+	private waitWithCancellation(ms: number): Promise<void> {
+		const sig = this.options.signal;
+
+		if (!sig) {
+			return new Promise((res) => setTimeout(res, ms));
+		}
+
+		if (sig.aborted) {
+			return Promise.reject(new TaskCancelledError('Cancelled during wait'));
 		}
 
 		return new Promise((resolve, reject) => {
-			this.throwIfCancelled();
+			let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-			const timeoutId = setTimeout(() => {
-				cleanup();
+			const onAbort = () => {
+				if (timeoutId !== null) {
+					clearTimeout(timeoutId);
+				}
+				sig.removeEventListener('abort', onAbort);
+				reject(new TaskCancelledError('Cancelled during wait'));
+			};
+
+			sig.addEventListener('abort', onAbort);
+
+			timeoutId = setTimeout(() => {
+				sig.removeEventListener('abort', onAbort);
 				resolve();
 			}, ms);
-
-			const handleAbort = () => {
-				cleanup();
-				reject(this.createError('CANCELLED', 'Task was cancelled during wait'));
-			};
-
-			const cleanup = () => {
-				clearTimeout(timeoutId);
-				this.opts.signal?.removeEventListener('abort', handleAbort);
-			};
-
-			this.opts.signal?.addEventListener('abort', handleAbort);
 		});
 	}
 }

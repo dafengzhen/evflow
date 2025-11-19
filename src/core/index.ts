@@ -1,6 +1,15 @@
-import { EventBus } from './event-bus.ts';
-import { EventBusFactory } from './event-bus-factory.ts';
-import { EventTask } from './event-task.ts';
-import { LifecycleManager } from './lifecycle-manager.ts';
+import { EventEmitter } from './event-emitter.ts';
+import {
+	EventTask,
+	TaskCancelledError,
+	TaskError,
+	TaskTimeoutError,
+} from './event-task.ts';
 
-export { EventBus, EventBusFactory, EventTask, LifecycleManager };
+export {
+	EventEmitter,
+	EventTask,
+	TaskCancelledError,
+	TaskError,
+	TaskTimeoutError,
+};

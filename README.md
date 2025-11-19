@@ -3,20 +3,20 @@
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-**EventBus** is a TypeScript-based typed event bus implementation that provides a modular and extensible event system.
+A fully type-safe, feature-rich **event system** built with TypeScript, supporting:
 
-It supports global and scoped middleware, plugin mechanisms, pattern-based event matching, priority and concurrency control, as well as robust error handling mechanisms.
+- ✔️ Event listeners & emitters
+- ✔️ Listener priority ordering
+- ✔️ One-time listeners (`once`)
+- ✔️ Execution state tracking
+- ✔️ Timeout & cancellation via `AbortSignal`
+- ✔️ Retry mechanism (maxRetries / retryDelay / isRetryable)
+- ✔️ Strongly-typed payloads & contexts
+- ✔️ Hooks for retry, timeout, cancellation, and state changes
+
+This project aims to provide a safer and more controllable alternative to traditional event emitter implementations.
 
 [简体中文](./README.zh.md)
-
-## ✨ Features
-
-- Global and scoped middleware
-- Plugin mechanism
-- Event pattern matching (supports wildcards)
-- Concurrency and sequential execution
-- Support for one-time event handlers
-- Timeout and error handling mechanisms
 
 ## 📦 Installation
 
@@ -27,44 +27,55 @@ npm install evflow
 ## 🚀 Usage
 
 ```ts
-import { EventBus } from "evflow";
+import { EventEmitter } from "evflow";
 
-type MyEvents = {
-  dataFetch: { url: string };
-  userLogin: { username: string };
-};
+interface AppEvents extends BaseEventDefinitions {
+  'user:registered': {
+    payload: {
+      userId: string;
+      email: string;
+    };
+  };
+}
 
-const bus = new EventBus<MyEvents>();
+const emitter = new EventEmitter<AppEvents>();
 
-// Subscribe
-bus.on('userLogin', async (ctx) => {
-  console.log('User logged in:', ctx.data.username);
-});
-
-// Emit
-await bus.emit('userLogin', { data: { username: 'alice' } });
-```
-
-```ts
-bus.on('dataFetch', async (ctx) => {
-  // Simulate request
-  await new Promise((r) => setTimeout(r, 200));
-  return `Fetched from ${ctx.data.url}`;
-});
-
-const results = await bus.emit(
-  'dataFetch',
-  { data: { url: 'https://api.example.com' } },
-  { maxRetries: 3, retryDelay: 100, timeout: 1000 },
-  { globalTimeout: 2000, parallel: true, stopOnError: false },
+// High priority: Send welcome email
+emitter.on(
+  'user:registered',
+  async ({ email }) => {
+    console.log(`[Email] Sending welcome email to ${email}`);
+    // Simulate success
+  },
+  { priority: 10 },
 );
 
-console.log(results);
+// Low priority: Create default user configuration
+emitter.on(
+  'user:registered',
+  async ({ userId }) => {
+    console.log(`[Config] Creating initial configuration for ${userId}`);
+  },
+  { priority: 0 },
+);
+
+await emitter.emit(
+  'user:registered',
+  { userId: 'u_001', email: 'test@example.com' },
+  undefined,
+  {
+    maxRetries: 2,
+    isRetryable: () => true,
+  },
+);
+
+// [Email] Sending welcome email to test@example.com
+// [Config] Creating initial configuration for u_001
 ```
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit issues or pull requests.
+Pull requests are welcome!
 
 ## License
 

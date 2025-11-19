@@ -1,55 +1,27 @@
-import { EventBus } from '../src/index.ts';
-import type { EventMap } from '../src/types/types.ts';
+import type { BaseEventDefinitions } from '../src/core/event.d.ts';
+import { EventEmitter } from '../src/index.ts';
 
-interface MyEventMap extends EventMap {
-	numberEvent: { value: number };
-	testEvent: { data: string };
+interface MicroEvents extends BaseEventDefinitions {
+	'order:paid': { payload: { orderId: string } };
+	'order:shipped': { payload: { orderId: string; expressId: string } };
 }
 
-const bus = new EventBus<MyEventMap>();
+const emitter = new EventEmitter<MicroEvents>();
 
-bus.on('testEvent', async (ctx) => {
-	console.log('handler1:', ctx.data.data);
-	return 'result1';
+// Order payment → Trigger shipment
+emitter.on('order:paid', async ({ orderId }) => {
+	console.log(`[Order] Paid ${orderId}`);
+	await emitter.emit('order:shipped', {
+		orderId,
+		expressId: 'SF123456',
+	});
 });
 
-bus.on(
-	'testEvent',
-	async (ctx) => {
-		console.log('handler2 (once):', ctx.data.data);
-		return 'result2';
-	},
-	{ once: true },
-);
-
-bus.use('testEvent', async (_ctx, next) => {
-	console.log('middleware before');
-	const result = await next();
-	console.log('middleware after');
-	return result;
+// Shipment event → Write log
+emitter.on('order:shipped', async ({ orderId, expressId }) => {
+	console.log(
+		`[Shipment] Order ${orderId} has been shipped (Tracking number: ${expressId})`,
+	);
 });
 
-bus.useGlobalMiddleware(async (_ctx, next) => {
-	console.log('global middleware before');
-	const result = await next();
-	console.log('global middleware after');
-	return result;
-});
-
-const results = await bus.emit(
-	'testEvent',
-	{ data: { data: 'hello world' } },
-	{ maxRetries: 2 },
-	{
-		globalTimeout: 3000,
-		maxConcurrency: 2,
-		parallel: true,
-		stopOnError: false,
-		traceId: 'trace-123',
-	},
-);
-
-console.log('emit results:', results);
-
-const results2 = await bus.emit('testEvent', { data: { data: 'second call' } });
-console.log('emit results 2:', results2);
+await emitter.emit('order:paid', { orderId: 'o008' });

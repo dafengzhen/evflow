@@ -3,20 +3,20 @@
 [![GitHub License](https://img.shields.io/github/license/dafengzhen/evflow?color=blue)](https://github.com/dafengzhen/evflow)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/dafengzhen/evflow/pulls)
 
-**EventBus** 是一个基于 TypeScript 的类型事件总线实现，提供模块化、可扩展的事件系统
+一个基于 TypeScript 的 **强类型事件系统**，支持：
 
-它支持全局和局部作用域的中间件、插件机制、基于模式的事件匹配、优先级与并发控制，以及健壮的错误处理机制
+- ✔️ 事件监听与触发
+- ✔️ 事件优先级（priority）
+- ✔️ 一次性监听（once）
+- ✔️ 任务执行状态（pending/running/retrying/succeeded/failed/timeout/cancelled）
+- ✔️ 超时控制（timeout）
+- ✔️ AbortSignal 取消
+- ✔️ 自动重试机制（maxRetries / retryDelay / isRetryable）
+- ✔️ 强类型 Payload 与 Context 推断
+
+本库旨在提供一个更安全、更可控、更灵活的事件执行机制
 
 [English](./README.md)
-
-## ✨ 特性
-
-- 全局和局部中间件
-- 插件机制
-- 事件模式匹配（支持通配符）
-- 并发与顺序执行
-- 支持一次性事件处理器
-- 超时与错误处理机制
 
 ## 📦 安装
 
@@ -24,47 +24,58 @@
 npm install evflow
 ```
 
-## 🚀 使用示例
+## 🚀 示例
 
 ```ts
-import { EventBus } from "evflow";
+import { EventEmitter } from "evflow";
 
-type MyEvents = {
-  dataFetch: { url: string };
-  userLogin: { username: string };
-};
+interface AppEvents extends BaseEventDefinitions {
+  'user:registered': {
+    payload: {
+      userId: string;
+      email: string;
+    };
+  };
+}
 
-const bus = new EventBus<MyEvents>();
+const emitter = new EventEmitter<AppEvents>();
 
-// Subscribe
-bus.on('userLogin', async (ctx) => {
-  console.log('User logged in:', ctx.data.username);
-});
-
-// Emit
-await bus.emit('userLogin', { data: { username: 'alice' } });
-```
-
-```ts
-bus.on('dataFetch', async (ctx) => {
-  // Simulate request
-  await new Promise((r) => setTimeout(r, 200));
-  return `Fetched from ${ctx.data.url}`;
-});
-
-const results = await bus.emit(
-  'dataFetch',
-  { data: { url: 'https://api.example.com' } },
-  { maxRetries: 3, retryDelay: 100, timeout: 1000 },
-  { globalTimeout: 2000, parallel: true, stopOnError: false },
+// High priority: Send welcome email
+emitter.on(
+  'user:registered',
+  async ({ email }) => {
+    console.log(`[Email] Sending welcome email to ${email}`);
+    // Simulate success
+  },
+  { priority: 10 },
 );
 
-console.log(results);
+// Low priority: Create default user configuration
+emitter.on(
+  'user:registered',
+  async ({ userId }) => {
+    console.log(`[Config] Creating initial configuration for ${userId}`);
+  },
+  { priority: 0 },
+);
+
+await emitter.emit(
+  'user:registered',
+  { userId: 'u_001', email: 'test@example.com' },
+  undefined,
+  {
+    maxRetries: 2,
+    isRetryable: () => true,
+  },
+);
+
+// [Email] Sending welcome email to test@example.com
+// [Config] Creating initial configuration for u_001
 ```
 
 ## 贡献
 
-欢迎贡献！欢迎提交 Issue 或 Pull Request
+欢迎贡献 PR！
 
 ## License
 

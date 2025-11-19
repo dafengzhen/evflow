@@ -1,32 +1,37 @@
-import { EventBusFactory as factory } from '../src/core/event-bus-factory.ts';
-import { LoggerPlugin } from '../src/index.ts';
-import type { EventMap } from '../src/types/types.ts';
+import type { BaseEventDefinitions } from '../src/core/event.d.ts';
+import { EventEmitter } from '../src/index.ts';
 
-interface MyEvents extends EventMap {
-	'user:login': { username: string };
-	'user:logout': { userId: number };
+interface TaskEvents extends BaseEventDefinitions {
+	'task:run': {
+		payload: { taskId: string };
+		context?: { signal: AbortSignal };
+	};
 }
 
-const bus = factory.create<MyEvents>({
-	plugins: [new LoggerPlugin()],
+const emitter = new EventEmitter<TaskEvents>();
+
+emitter.on('task:run', async (payload, ctx) => {
+	console.log(`[Task] Starting execution ${payload.taskId}`);
+
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => resolve(), 3000);
+
+		ctx?.signal?.addEventListener('abort', () => {
+			clearTimeout(timer);
+			console.log(`[Task] ${payload.taskId} has been canceled`);
+			reject(new Error('Task canceled'));
+		});
+	});
+
+	console.log(`[Task] Completed ${payload.taskId}`);
 });
 
-bus.on('user:login', async (ctx) => {
-	console.log('handling login', ctx.data.username);
-	await new Promise((r) => setTimeout(r, 120));
-	if (ctx.data.username === 'error') {
-		throw new Error('bad user');
-	}
-	return { ok: true };
-});
-
-await bus.emit('user:login', {
-	data: { username: 'alice' },
-	meta: { eventName: 'user:login' },
-});
-await bus
-	.emit('user:login', {
-		data: { username: 'error' },
-		meta: { eventName: 'user:login' },
-	})
-	.catch(() => {});
+await emitter.emit(
+	'task:run',
+	{ taskId: 't001' },
+	{ signal: undefined },
+	{
+		timeout: 1000, // 1 second timeout
+		onTimeout: (t) => console.log(`Task timed out (${t}ms)`),
+	},
+);

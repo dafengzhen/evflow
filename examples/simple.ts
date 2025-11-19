@@ -1,21 +1,42 @@
-import { EventTask } from '../src/index.ts';
+import type { BaseEventDefinitions } from '../src/core/event.d.ts';
+import { EventEmitter } from '../src/index.ts';
 
-const task = new EventTask(
-	{ data: { x: 1 } },
-	async (ctx) => {
-		console.log('executing', ctx.data);
-		if (Math.random() < 0.7) {
-			throw new Error('random fail');
-		}
-		return 'OK';
+interface AppEvents extends BaseEventDefinitions {
+	'user:registered': {
+		payload: {
+			userId: string;
+			email: string;
+		};
+	};
+}
+
+const emitter = new EventEmitter<AppEvents>();
+
+// High priority: Send welcome email
+emitter.on(
+	'user:registered',
+	async ({ email }) => {
+		console.log(`[Email] Sending welcome email to ${email}`);
+		// Simulate success
 	},
-	{
-		maxRetries: 3,
-		onRetry: (a, e) => console.log(`Retry #${a}`, e.message),
-		onStateChange: (s) => console.log('State:', s),
-		retryDelay: (n) => n * 500,
-		timeout: 2000,
-	},
+	{ priority: 10 },
 );
 
-task.execute().then(console.log);
+// Low priority: Create default user configuration
+emitter.on(
+	'user:registered',
+	async ({ userId }) => {
+		console.log(`[Config] Creating initial configuration for ${userId}`);
+	},
+	{ priority: 0 },
+);
+
+await emitter.emit(
+	'user:registered',
+	{ userId: 'u_001', email: 'test@example.com' },
+	undefined,
+	{
+		maxRetries: 2,
+		isRetryable: () => true,
+	},
+);
