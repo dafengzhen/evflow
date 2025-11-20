@@ -44,22 +44,55 @@ export interface LoggingPluginOptions {
 	filterEvent?: (eventName: string) => boolean;
 }
 
+/**
+ * Format date like: 2025-11-21 10:15:30.123
+ */
+function formatDateForLog(date: Date): string {
+	const pad = (n: number, width = 2) => String(n).padStart(width, '0');
+
+	const year = date.getFullYear();
+	const month = pad(date.getMonth() + 1);
+	const day = pad(date.getDate());
+	const hour = pad(date.getHours());
+	const minute = pad(date.getMinutes());
+	const second = pad(date.getSeconds());
+	const ms = pad(date.getMilliseconds(), 3);
+
+	return `${year}-${month}-${day} ${hour}:${minute}:${second}.${ms}`;
+}
+
+/**
+ * defaultLogger.
+ *
+ * @author dafengzhen
+ */
 const defaultLogger: NonNullable<LoggingPluginOptions['logger']> = (
 	level,
 	message,
 	meta,
 ) => {
-	const prefix = `[EventLogger][${level.toUpperCase()}]`;
-	if (meta) {
+	const now = new Date();
+	const timestamp = formatDateForLog(now);
+
+	const levelStr = level.toUpperCase().padEnd(5, ' '); // INFO / ERROR / DEBUG ...
+	const pid =
+		typeof process !== 'undefined'
+			? String(process.pid).padStart(5, ' ')
+			: '-----';
+
+	const thread = '[main]';
+	const loggerName = 'EventLogger';
+
+	const prefix = `${timestamp}  ${levelStr} ${pid} --- ${thread} ${loggerName} : ${message}`;
+
+	if (meta && Object.keys(meta).length > 0) {
 		console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](
 			prefix,
-			message,
 			meta,
 		);
 	} else {
 		console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](
 			prefix,
-			message,
 		);
 	}
 };
@@ -121,18 +154,13 @@ function wrapEmitOptionsWithLogging<
 	K extends EventName<T>,
 >(
 	eventName: string,
-	options: EmitOptions<T, K> | undefined,
+	options: EmitOptions<T, K>,
 	logger: (
 		level: LogLevel,
 		message: string,
 		meta?: Record<string, unknown>,
 	) => void,
-	_global: LoggingPluginOptions,
-): EmitOptions<T, EventName<T>> | undefined {
-	if (!options) {
-		return options;
-	}
-
+): EmitOptions<T, EventName<T>> {
 	const originalOnStateChange = options.onStateChange;
 	const originalOnRetry = options.onRetry;
 	const originalOnTimeout = options.onTimeout;
@@ -176,6 +204,20 @@ export function createLoggingPlugin<T extends BaseEventDefinitions>(
 	return (ctx) => {
 		const logger = options.logger ?? defaultLogger;
 
+		const logEmits = options.logEmits !== false;
+		const logSuccess = options.logSuccess !== false;
+		const logErrors = options.logErrors !== false;
+		const logPayload = options.logPayload !== false; // 原来默认 true
+		const logContext = !!options.logContext;
+		const logOptions = !!options.logOptions;
+		const hasFilter = typeof options.filterEvent === 'function';
+
+		if (!logEmits && !logSuccess && !logErrors && !hasFilter) {
+			const noopDispose = () => {};
+			ctx.registerCleanup(noopDispose);
+			return;
+		}
+
 		const middleware: EventMiddleware<T> = async (emitCtx, next) => {
 			const { eventName } = emitCtx;
 
@@ -183,54 +225,60 @@ export function createLoggingPlugin<T extends BaseEventDefinitions>(
 				return next();
 			}
 
-			const start = Date.now();
+			const needDuration = logSuccess || logErrors;
+			const start = needDuration ? Date.now() : 0;
 
-			if (options.logEmits !== false) {
+			if (logEmits) {
 				logger('info', 'emit start', {
 					eventName,
-					payload: options.logPayload ? emitCtx.payload : undefined,
-					context: options.logContext ? emitCtx.context : undefined,
-					options: options.logOptions
+					payload: logPayload ? emitCtx.payload : undefined,
+					context: logContext ? emitCtx.context : undefined,
+					options: logOptions
 						? sanitizeEmitOptions(emitCtx.options)
 						: undefined,
 				});
 			}
 
-			// Wrap callbacks on EmitOptions to add logging
-			emitCtx.options = wrapEmitOptionsWithLogging(
-				eventName,
-				emitCtx.options,
-				logger,
-				options,
-			) as any;
+			const originalOptions = emitCtx.options;
+			const hasCallbacks =
+				!!originalOptions &&
+				(!!originalOptions.onStateChange ||
+					!!originalOptions.onRetry ||
+					!!originalOptions.onTimeout ||
+					!!originalOptions.onCancel ||
+					!!originalOptions.isRetryable);
+
+			if (originalOptions && hasCallbacks) {
+				emitCtx.options = wrapEmitOptionsWithLogging(
+					eventName,
+					originalOptions,
+					logger,
+				) as any;
+			}
 
 			try {
 				await next();
-				const duration = Date.now() - start;
-
-				if (options.logSuccess !== false) {
+				if (logSuccess) {
+					const duration = needDuration ? Date.now() - start : undefined;
 					logger('info', 'emit success', {
 						eventName,
 						duration,
 					});
 				}
 			} catch (error) {
-				const duration = Date.now() - start;
-
-				if (options.logErrors !== false) {
+				if (logErrors) {
+					const duration = needDuration ? Date.now() - start : undefined;
 					logger('error', 'emit error', {
 						eventName,
 						duration,
 						error,
 					});
 				}
-
 				// Preserve original behavior
 				throw error;
 			}
 		};
 
-		// Attach middleware via plugin context and clean up on plugin disposal
 		const dispose = ctx.use(middleware);
 		ctx.registerCleanup(dispose);
 	};
