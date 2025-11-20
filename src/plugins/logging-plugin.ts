@@ -5,7 +5,7 @@ import type {
 	EventName,
 	EventPlugin,
 	EventState,
-} from '../core/event.d.ts';
+} from '../core/types.ts';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 

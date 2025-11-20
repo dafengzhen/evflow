@@ -8,7 +8,7 @@ import type {
 	EventState,
 	EventTaskOptions,
 	IEventTask,
-} from './event.d.ts';
+} from './types.ts';
 
 /**
  * TaskError.

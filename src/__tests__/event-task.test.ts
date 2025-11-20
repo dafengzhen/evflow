@@ -6,6 +6,11 @@ import {
 	jest,
 	test,
 } from '@jest/globals';
+import {
+	EventTask,
+	TaskCancelledError,
+	TaskTimeoutError,
+} from '../core/index.ts';
 import type {
 	BaseEventDefinitions,
 	EmitOptions,
@@ -13,12 +18,7 @@ import type {
 	EventListener,
 	EventName,
 	EventPayload,
-} from '../core/event.d.ts';
-import {
-	EventTask,
-	TaskCancelledError,
-	TaskTimeoutError,
-} from '../core/index.ts';
+} from '../core/types.ts';
 
 interface TestEvents extends BaseEventDefinitions {
 	'test:event': {

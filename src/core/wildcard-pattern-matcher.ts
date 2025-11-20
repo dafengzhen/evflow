@@ -7,7 +7,7 @@ import type {
 	OnceOptions,
 	OnOptions,
 	WildcardEventListener,
-} from './event.d.ts';
+} from './types.ts';
 
 /**
  * Escape regex characters.

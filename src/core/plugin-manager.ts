@@ -12,7 +12,7 @@ import type {
 	PluginContext,
 	PluginMeta,
 	WildcardEventListener,
-} from './event.d.ts';
+} from './types.ts';
 
 /**
  * PluginManager.

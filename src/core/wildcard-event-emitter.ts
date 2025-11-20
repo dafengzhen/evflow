@@ -9,7 +9,7 @@ import type {
 	OnceOptions,
 	OnOptions,
 	WildcardEventListener,
-} from './event.d.ts';
+} from './types.ts';
 import { WildcardPatternMatcher } from './wildcard-pattern-matcher.ts';
 
 /**

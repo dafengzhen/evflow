@@ -1,4 +1,4 @@
-import type { BaseEventDefinitions } from './event.d.ts';
+import type { BaseEventDefinitions } from './types.ts';
 import { WildcardEventEmitter } from './wildcard-event-emitter.ts';
 
 /**

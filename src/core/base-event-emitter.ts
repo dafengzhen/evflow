@@ -1,3 +1,4 @@
+import { EventTask } from './event-task.ts';
 import type {
 	BaseEventDefinitions,
 	EmitContext,
@@ -12,9 +13,7 @@ import type {
 	ListenerEntry,
 	OnceOptions,
 	OnOptions,
-} from './event.d.ts';
-
-import { EventTask } from './event-task.ts';
+} from './types.ts';
 
 function createEmitContext<
 	T extends BaseEventDefinitions,

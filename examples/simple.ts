@@ -1,4 +1,4 @@
-import type { BaseEventDefinitions } from '../src/core/event.d.ts';
+import type { BaseEventDefinitions } from '../src/core/types.ts';
 import { createEventEmitter } from '../src/index.ts';
 
 interface AppEvents extends BaseEventDefinitions {

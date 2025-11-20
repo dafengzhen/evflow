@@ -1,4 +1,4 @@
-import type { BaseEventDefinitions, PlainObject } from '../src/core/event.d.ts';
+import type { BaseEventDefinitions, PlainObject } from '../src/core/types.ts';
 import {
 	createEventEmitter,
 	createLoggingPlugin,

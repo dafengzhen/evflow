@@ -4,7 +4,7 @@ import type {
 	EventPlugin,
 	PlainObject,
 	PluginContext,
-} from '../src/core/event.d.ts';
+} from '../src/core/types.ts';
 import { createEventEmitter, PluginManager } from '../src/index.ts';
 
 interface AppEvents extends BaseEventDefinitions {
