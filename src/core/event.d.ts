@@ -202,3 +202,27 @@ export interface InternalEntry<T extends BaseEventDefinitions> {
 	once: boolean;
 	priority: number;
 }
+
+export interface EmitContext<
+	T extends BaseEventDefinitions,
+	K extends EventName<T> = EventName<T>,
+> {
+	eventName: K;
+	payload: EventPayload<T, K>;
+	context?: EventContext<T, K>;
+	options?: EmitOptions<T, K>;
+	isPropagationStopped(): boolean;
+	stopPropagation(): void;
+}
+
+export type EventMiddleware<T extends BaseEventDefinitions> = <
+	K extends EventName<T>,
+>(
+	ctx: EmitContext<T, K>,
+	next: () => Promise<void>,
+) => Promise<void>;
+
+export interface IEventEmitterWithMiddleware<T extends BaseEventDefinitions>
+	extends IEventEmitterCore<T> {
+	use(middleware: EventMiddleware<T>): () => void;
+}

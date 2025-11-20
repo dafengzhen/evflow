@@ -1,11 +1,13 @@
 import type {
 	BaseEventDefinitions,
+	EmitContext,
 	EmitOptions,
 	EventContext,
 	EventListener,
+	EventMiddleware,
 	EventName,
 	EventPayload,
-	IEventEmitterCore,
+	IEventEmitterWithMiddleware,
 	InternalListener,
 	ListenerEntry,
 	OnceOptions,
@@ -14,18 +16,47 @@ import type {
 
 import { EventTask } from './event-task.ts';
 
+function createEmitContext<
+	T extends BaseEventDefinitions,
+	K extends EventName<T>,
+>(
+	eventName: K,
+	payload: EventPayload<T, K>,
+	context?: EventContext<T, K>,
+	options?: EmitOptions<T, K>,
+): EmitContext<T, K> {
+	let stopped = false;
+
+	return {
+		eventName,
+		payload,
+		context,
+		options,
+
+		isPropagationStopped(): boolean {
+			return stopped;
+		},
+
+		stopPropagation(): void {
+			stopped = true;
+		},
+	};
+}
+
 /**
  * BaseEventEmitter.
  *
  * @author dafengzhen
  */
 export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
-	implements IEventEmitterCore<T>
+	implements IEventEmitterWithMiddleware<T>
 {
 	private readonly listeners: Map<
 		EventName<T>,
 		Map<number, Set<ListenerEntry<T, any>>>
 	> = new Map();
+
+	private readonly middlewares: Set<EventMiddleware<T>> = new Set();
 
 	on<K extends EventName<T>>(
 		eventName: K,
@@ -84,6 +115,63 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 	}
 
 	async emit<K extends EventName<T>>(
+		eventName: K,
+		payload: EventPayload<T, K>,
+		context?: EventContext<T, K>,
+		options?: EmitOptions<T, K>,
+	): Promise<void> {
+		const ctx: EmitContext<T, K> = createEmitContext(
+			eventName,
+			payload,
+			context,
+			options,
+		);
+
+		const middlewares = [...this.middlewares];
+
+		const dispatch = async () => {
+			if (ctx.isPropagationStopped()) {
+				return;
+			}
+
+			await this.dispatchEmit(
+				ctx.eventName,
+				ctx.payload,
+				ctx.context,
+				ctx.options,
+			);
+		};
+
+		const composed = middlewares.reduceRight<() => Promise<void>>(
+			(next, mw) => {
+				return () => mw(ctx, next);
+			},
+			dispatch,
+		);
+
+		await composed();
+	}
+
+	use(middleware: EventMiddleware<T>): () => void {
+		this.middlewares.add(middleware);
+
+		return () => {
+			this.middlewares.delete(middleware);
+		};
+	}
+
+	protected getExtraListenersForEmit(
+		_eventName: EventName<T>,
+	): InternalListener<T>[] {
+		return [];
+	}
+
+	protected afterEmitExtra(
+		_eventName: EventName<T>,
+		_extraListeners: InternalListener<T>[],
+	): void {}
+
+	protected async dispatchEmit<K extends EventName<T>>(
 		eventName: K,
 		payload: EventPayload<T, K>,
 		context?: EventContext<T, K>,
@@ -154,15 +242,4 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 
 		this.afterEmitExtra(eventName, invokedExtra);
 	}
-
-	protected getExtraListenersForEmit(
-		_eventName: EventName<T>,
-	): InternalListener<T>[] {
-		return [];
-	}
-
-	protected afterEmitExtra(
-		_eventName: EventName<T>,
-		_extraListeners: InternalListener<T>[],
-	): void {}
 }
