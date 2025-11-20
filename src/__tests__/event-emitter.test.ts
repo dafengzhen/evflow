@@ -11,7 +11,7 @@ import type {
 	EventContext,
 	EventPayload,
 } from '../core/event.d.ts';
-import { EventEmitter, TaskTimeoutError } from '../core/index.ts';
+import { createEventEmitter, TaskTimeoutError } from '../core/index.ts';
 
 interface TestEvents extends BaseEventDefinitions {
 	'test:event': {
@@ -26,7 +26,7 @@ interface TestEvents extends BaseEventDefinitions {
 
 type TEvents = TestEvents;
 
-describe('EventEmitter', () => {
+describe('BaseEventEmitter', () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
 	});
@@ -37,7 +37,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Basic on / emit: Listener receives correct payload and context', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 		const listener = jest.fn<any>(async () => {});
 
 		emitter.on('test:event', listener);
@@ -48,11 +48,15 @@ describe('EventEmitter', () => {
 		await emitter.emit('test:event', payload, context);
 
 		expect(listener).toHaveBeenCalledTimes(1);
-		expect(listener).toHaveBeenCalledWith({ value: 123 }, { meta: 'ctx' });
+		expect(listener).toHaveBeenCalledWith(
+			{ value: 123 },
+			{ meta: 'ctx' },
+			expect.any(Object),
+		);
 	});
 
 	test('Emitting without listeners does not throw an error', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		await expect(
 			emitter.emit('test:event', { value: 1 }, { meta: 'x' }),
@@ -60,7 +64,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Once listener is called only once', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn<any>(async () => {});
 
@@ -74,7 +78,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('The unsubscribe function returned by on can remove the listener', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn<any>(async () => {});
 		const off = emitter.on('test:event', listener);
@@ -88,7 +92,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('off can remove the listener', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn(async () => {});
 		emitter.on('test:event', listener);
@@ -101,7 +105,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Listeners are executed in order from highest to lowest priority', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 		const calls: string[] = [];
 
 		const l1 = jest.fn(async () => {
@@ -125,7 +129,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Listeners for the same event execute sequentially (waiting for each one)', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 		const order: string[] = [];
 
 		const l1 = jest.fn(
@@ -154,7 +158,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Options passed to emit are used for EventTask (e.g., timeout)', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn(
 			() =>
@@ -187,7 +191,7 @@ describe('EventEmitter', () => {
 	});
 
 	test('Listener with once:true is removed after emit', async () => {
-		const emitter = new EventEmitter<TEvents>();
+		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn(async () => {});
 

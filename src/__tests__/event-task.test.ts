@@ -62,7 +62,11 @@ describe('EventTask', () => {
 		await task.execute();
 
 		expect(handler).toHaveBeenCalledTimes(1);
-		expect(handler).toHaveBeenCalledWith({ value: 42 }, { meta: 'ctx' });
+		expect(handler).toHaveBeenCalledWith(
+			{ value: 42 },
+			{ meta: 'ctx' },
+			expect.any(Object),
+		);
 
 		// State transitions: pending -> running -> succeeded
 		expect(onStateChange.mock.calls.map((c) => c[0])).toEqual([

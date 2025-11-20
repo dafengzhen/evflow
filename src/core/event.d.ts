@@ -40,6 +40,21 @@ export type EventListener<
 	options?: EmitOptions<T, K>,
 ) => Promise<void>;
 
+export type AnyEventPayload<T extends BaseEventDefinitions> =
+	T[EventName<T>]['payload'];
+
+export type AnyEventContext<T extends BaseEventDefinitions> =
+	| (T[EventName<T>] extends { context: infer C }
+			? C & BaseContext
+			: BaseContext)
+	| undefined;
+
+export type WildcardEventListener<T extends BaseEventDefinitions> = (
+	payload: AnyEventPayload<T>,
+	context?: AnyEventContext<T>,
+	options?: EmitOptions<T>,
+) => Promise<void>;
+
 export type EventState =
 	| 'pending'
 	| 'running'
@@ -90,7 +105,7 @@ export interface OnOptions {
 
 export interface OnceOptions extends Omit<OnOptions, 'once'> {}
 
-export interface IEventEmitter<T extends BaseEventDefinitions> {
+export interface IEventEmitterCore<T extends BaseEventDefinitions> {
 	emit<K extends EventName<T>>(
 		eventName: K,
 		payload: EventPayload<T, K>,
@@ -116,6 +131,30 @@ export interface IEventEmitter<T extends BaseEventDefinitions> {
 	): void;
 }
 
+export interface IWildcardEventEmitter<T extends BaseEventDefinitions>
+	extends IEventEmitterCore<T> {
+	onPattern(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnOptions,
+	): () => void;
+
+	oncePattern(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnceOptions,
+	): () => void;
+
+	offPattern(pattern: string, listener: WildcardEventListener<T>): void;
+}
+
+export interface InternalListener<T extends BaseEventDefinitions> {
+	listener: EventListener<T, any>;
+	once: boolean;
+	priority: number;
+	meta?: Record<string, unknown>;
+}
+
 export interface ListenerEntry<
 	T extends BaseEventDefinitions,
 	K extends EventName<T>,
@@ -129,4 +168,37 @@ export interface IEventTask<
 	_K extends EventName<T>,
 > {
 	execute(): Promise<void>;
+}
+
+export interface MatchedListener<T extends BaseEventDefinitions> {
+	pattern: string;
+	listener: WildcardEventListener<T>;
+	once: boolean;
+	priority: number;
+}
+
+export interface IEventPatternMatcher<T extends BaseEventDefinitions> {
+	add(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnOptions,
+	): () => void;
+
+	addOnce(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnceOptions,
+	): () => void;
+
+	remove(pattern: string, listener: WildcardEventListener<T>): void;
+
+	match<K extends EventName<T>>(eventName: K): MatchedListener<T>[];
+}
+
+export interface InternalEntry<T extends BaseEventDefinitions> {
+	pattern: string;
+	regex: RegExp;
+	listener: WildcardEventListener<T>;
+	once: boolean;
+	priority: number;
 }

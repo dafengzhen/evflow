@@ -10,6 +10,11 @@ import type {
 	IEventTask,
 } from './event.d.ts';
 
+/**
+ * TaskError.
+ *
+ * @author dafengzhen
+ */
 export class TaskError extends Error {
 	readonly code: string;
 
@@ -20,6 +25,11 @@ export class TaskError extends Error {
 	}
 }
 
+/**
+ * TaskCancelledError.
+ *
+ * @author dafengzhen
+ */
 export class TaskCancelledError extends TaskError {
 	constructor(message = 'Task was cancelled') {
 		super('CANCELLED', message);
@@ -27,6 +37,11 @@ export class TaskCancelledError extends TaskError {
 	}
 }
 
+/**
+ * TaskTimeoutError.
+ *
+ * @author dafengzhen
+ */
 export class TaskTimeoutError extends TaskError {
 	readonly timeout: number;
 
@@ -37,6 +52,11 @@ export class TaskTimeoutError extends TaskError {
 	}
 }
 
+/**
+ * EventTask.
+ *
+ * @author dafengzhen
+ */
 export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 	implements IEventTask<T, K>
 {
@@ -181,7 +201,9 @@ export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 		const { timeout, signal: outer } = this.options;
 
 		if (!timeout && !outer) {
-			return Promise.resolve(this.handler(this.payload, this.context));
+			return Promise.resolve(
+				this.handler(this.payload, this.context, this.options),
+			);
 		}
 
 		const controller = new AbortController();
@@ -223,7 +245,7 @@ export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 
 			inner.addEventListener('abort', onAbort, { once: true });
 
-			Promise.resolve(this.handler(this.payload, ctx)).then(
+			Promise.resolve(this.handler(this.payload, ctx, this.options)).then(
 				(val) => {
 					cleanup();
 					resolve(val);

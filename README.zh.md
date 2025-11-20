@@ -27,7 +27,7 @@ npm install evflow
 ## 🚀 示例
 
 ```ts
-import { EventEmitter } from "evflow";
+import { createEventEmitter } from "evflow";
 
 interface AppEvents extends BaseEventDefinitions {
   'user:registered': {
@@ -38,7 +38,7 @@ interface AppEvents extends BaseEventDefinitions {
   };
 }
 
-const emitter = new EventEmitter<AppEvents>();
+const emitter = createEventEmitter<AppEvents>();
 
 // High priority: Send welcome email
 emitter.on(

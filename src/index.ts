@@ -1,9 +1,12 @@
 import {
-	EventEmitter,
+	BaseEventEmitter,
+	createEventEmitter,
 	EventTask,
 	TaskCancelledError,
 	TaskError,
 	TaskTimeoutError,
+	WildcardEventEmitter,
+	WildcardPatternMatcher,
 } from './core/index.ts';
 
 export {
@@ -11,5 +14,8 @@ export {
 	TaskError,
 	TaskTimeoutError,
 	TaskCancelledError,
-	EventEmitter,
+	BaseEventEmitter,
+	WildcardEventEmitter,
+	WildcardPatternMatcher,
+	createEventEmitter,
 };

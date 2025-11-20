@@ -1,5 +1,5 @@
 import type { BaseEventDefinitions } from '../src/core/event.d.ts';
-import { EventEmitter } from '../src/index.ts';
+import { createEventEmitter } from '../src/index.ts';
 
 interface TaskEvents extends BaseEventDefinitions {
 	'task:run': {
@@ -8,7 +8,7 @@ interface TaskEvents extends BaseEventDefinitions {
 	};
 }
 
-const emitter = new EventEmitter<TaskEvents>();
+const emitter = createEventEmitter<TaskEvents>();
 
 emitter.on('task:run', async (payload, ctx) => {
 	console.log(`[Task] Starting execution ${payload.taskId}`);

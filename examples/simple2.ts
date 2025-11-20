@@ -1,12 +1,12 @@
 import type { BaseEventDefinitions } from '../src/core/event.d.ts';
-import { EventEmitter } from '../src/index.ts';
+import { createEventEmitter } from '../src/index.ts';
 
 interface MicroEvents extends BaseEventDefinitions {
 	'order:paid': { payload: { orderId: string } };
 	'order:shipped': { payload: { orderId: string; expressId: string } };
 }
 
-const emitter = new EventEmitter<MicroEvents>();
+const emitter = createEventEmitter<MicroEvents>();
 
 // Order payment → Trigger shipment
 emitter.on('order:paid', async ({ orderId }) => {

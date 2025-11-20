@@ -1,5 +1,5 @@
 import type { BaseEventDefinitions } from '../src/core/event.d.ts';
-import { EventEmitter } from '../src/index.ts';
+import { createEventEmitter } from '../src/index.ts';
 
 interface AppEvents extends BaseEventDefinitions {
 	'user:registered': {
@@ -10,7 +10,7 @@ interface AppEvents extends BaseEventDefinitions {
 	};
 }
 
-const emitter = new EventEmitter<AppEvents>();
+const emitter = createEventEmitter<AppEvents>();
 
 // High priority: Send welcome email
 emitter.on(
