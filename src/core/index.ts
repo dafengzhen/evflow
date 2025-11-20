@@ -6,6 +6,7 @@ import {
 	TaskError,
 	TaskTimeoutError,
 } from './event-task.ts';
+import { PluginManager } from './plugin-manager.ts';
 import { WildcardEventEmitter } from './wildcard-event-emitter.ts';
 import { WildcardPatternMatcher } from './wildcard-pattern-matcher.ts';
 
@@ -18,4 +19,5 @@ export {
 	WildcardEventEmitter,
 	WildcardPatternMatcher,
 	createEventEmitter,
+	PluginManager,
 };

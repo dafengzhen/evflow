@@ -2,6 +2,7 @@ import {
 	BaseEventEmitter,
 	createEventEmitter,
 	EventTask,
+	PluginManager,
 	TaskCancelledError,
 	TaskError,
 	TaskTimeoutError,
@@ -18,4 +19,5 @@ export {
 	WildcardEventEmitter,
 	WildcardPatternMatcher,
 	createEventEmitter,
+	PluginManager,
 };

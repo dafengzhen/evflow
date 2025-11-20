@@ -31,7 +31,10 @@ function createEmitContext<
 		eventName,
 		payload,
 		context,
-		options,
+		options: {
+			...options,
+			__eventName__: eventName,
+		},
 
 		isPropagationStopped(): boolean {
 			return stopped;

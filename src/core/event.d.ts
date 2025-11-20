@@ -226,3 +226,52 @@ export interface IEventEmitterWithMiddleware<T extends BaseEventDefinitions>
 	extends IEventEmitterCore<T> {
 	use(middleware: EventMiddleware<T>): () => void;
 }
+
+export interface PluginMeta {
+	name: string;
+	version?: string;
+	dependencies?: string[];
+}
+
+export interface PluginContext<T extends BaseEventDefinitions> {
+	meta: PluginMeta;
+
+	emitter: IEventEmitterWithMiddleware<T> & IWildcardEventEmitter<T>;
+
+	on<K extends EventName<T>>(
+		eventName: K,
+		listener: EventListener<T, K>,
+		options?: OnOptions,
+	): () => void;
+
+	once<K extends EventName<T>>(
+		eventName: K,
+		listener: EventListener<T, K>,
+		options?: OnceOptions,
+	): () => void;
+
+	onPattern(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnOptions,
+	): () => void;
+
+	oncePattern(
+		pattern: string,
+		listener: WildcardEventListener<T>,
+		options?: OnceOptions,
+	): () => void;
+
+	use(middleware: EventMiddleware<T>): () => void;
+
+	registerCleanup(fn: () => void): void;
+}
+
+export type EventPlugin<T extends BaseEventDefinitions> = (
+	ctx: PluginContext<T>,
+) => void;
+
+export interface LoadedPlugin {
+	meta: PluginMeta;
+	dispose: () => void;
+}
