@@ -9,6 +9,7 @@ import {
 	WildcardEventEmitter,
 	WildcardPatternMatcher,
 } from './core/index.ts';
+import { createLoggingPlugin } from './plugins/index.ts';
 
 export {
 	EventTask,
@@ -20,4 +21,5 @@ export {
 	WildcardPatternMatcher,
 	createEventEmitter,
 	PluginManager,
+	createLoggingPlugin,
 };
