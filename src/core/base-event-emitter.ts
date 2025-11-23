@@ -9,41 +9,12 @@ import type {
 	EventName,
 	EventPayload,
 	IEventEmitterWithMiddleware,
+	IEventTask,
 	InternalListener,
 	ListenerEntry,
 	OnceOptions,
 	OnOptions,
 } from './types.ts';
-
-function createEmitContext<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
->(
-	eventName: K,
-	payload?: EventPayload<T, K>,
-	context?: EventContext<T, K>,
-	options?: EmitOptions<T, K>,
-): EmitContext<T, K> {
-	let stopped = false;
-
-	return {
-		eventName,
-		payload,
-		context,
-		options: {
-			...options,
-			__eventName__: eventName,
-		},
-
-		isPropagationStopped(): boolean {
-			return stopped;
-		},
-
-		stopPropagation(): void {
-			stopped = true;
-		},
-	};
-}
 
 /**
  * BaseEventEmitter.
@@ -85,6 +56,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		};
 
 		bucket.add(entry);
+		this.onListenerAdded(eventName, entry, priority);
 
 		return () => this.off(eventName, listener);
 	}
@@ -106,10 +78,11 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 			return;
 		}
 
-		for (const [, bucket] of group) {
+		for (const [priority, bucket] of group) {
 			for (const entry of bucket) {
 				if (entry.listener === listener) {
 					bucket.delete(entry);
+					this.onListenerRemoved(eventName, entry, priority);
 					return;
 				}
 			}
@@ -122,12 +95,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		context?: EventContext<T, K>,
 		options?: EmitOptions<T, K>,
 	): Promise<void> {
-		const ctx: EmitContext<T, K> = createEmitContext(
-			eventName,
-			payload,
-			context,
-			options,
-		);
+		const ctx = this.createEmitContext(eventName, payload, context, options);
 
 		const middlewares = [...this.middlewares];
 
@@ -151,7 +119,17 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 			dispatch,
 		);
 
-		await composed();
+		await this.beforeEmit(ctx);
+
+		let error: unknown;
+		try {
+			await composed();
+		} catch (err) {
+			error = err;
+			throw err;
+		} finally {
+			await this.afterEmit(ctx, error);
+		}
 	}
 
 	use(middleware: EventMiddleware<T>): () => void {
@@ -213,10 +191,26 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 			const exactBucket = exactByPriority.get(p);
 			if (exactBucket) {
 				for (const entry of exactBucket) {
-					await new EventTask(entry.listener, payload, context, {
+					const taskOptions = {
 						...options,
 						__eventName__: eventName,
-					}).execute();
+					};
+					const task = this.createEventTask(
+						entry.listener,
+						payload,
+						context,
+						taskOptions,
+					);
+
+					try {
+						await task.execute();
+					} catch (err) {
+						await this.onListenerError(eventName, err, entry.listener);
+
+						if (taskOptions.throwOnError) {
+							throw err;
+						}
+					}
 
 					if (entry.once) {
 						toRemoveExact.push({ bucket: exactBucket, entry });
@@ -229,10 +223,26 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 					continue;
 				}
 
-				await new EventTask(extra.listener, payload, context, {
+				const taskOptions = {
 					...options,
 					__eventName__: eventName,
-				}).execute();
+				};
+				const task = this.createEventTask(
+					extra.listener,
+					payload,
+					context,
+					taskOptions,
+				);
+
+				try {
+					await task.execute();
+				} catch (err) {
+					await this.onListenerError(eventName, err, extra.listener);
+
+					if (taskOptions.throwOnError) {
+						throw err;
+					}
+				}
 
 				invokedExtra.push(extra);
 			}
@@ -243,5 +253,79 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		}
 
 		this.afterEmitExtra(eventName, invokedExtra);
+	}
+
+	protected async beforeEmit<K extends EventName<T>>(
+		_ctx: EmitContext<T, K>,
+	): Promise<void> {
+		// no-op
+	}
+
+	protected async afterEmit<K extends EventName<T>>(
+		_ctx: EmitContext<T, K>,
+		_error?: unknown,
+	): Promise<void> {
+		// no-op
+	}
+
+	protected onListenerAdded<K extends EventName<T>>(
+		_eventName: K,
+		_entry: ListenerEntry<T, K>,
+		_priority: number,
+	): void {
+		// no-op
+	}
+
+	protected onListenerRemoved<K extends EventName<T>>(
+		_eventName: K,
+		_entry: ListenerEntry<T, K>,
+		_priority: number,
+	): void {
+		// no-op
+	}
+
+	protected async onListenerError<K extends EventName<T>>(
+		_eventName: K,
+		_error: unknown,
+		_listener: EventListener<T, K>,
+	): Promise<void> {
+		// no-op
+	}
+
+	protected createEmitContext<K extends EventName<T>>(
+		eventName: K,
+		payload?: EventPayload<T, K>,
+		context?: EventContext<T, K>,
+		options?: EmitOptions<T, K>,
+	): EmitContext<T, K> {
+		let stopped = false;
+
+		return {
+			eventName,
+			payload,
+			context,
+			options: {
+				...options,
+				__eventName__: eventName,
+			},
+			isPropagationStopped() {
+				return stopped;
+			},
+			stopPropagation() {
+				stopped = true;
+			},
+		};
+	}
+
+	protected createEventTask<K extends EventName<T>>(
+		listener: EventListener<T, K>,
+		payload: EventPayload<T, K> | undefined,
+		context: EventContext<T, K> | undefined,
+		options: EmitOptions<T, K> | undefined,
+	): IEventTask<T, K> {
+		return new EventTask(listener, payload, context, {
+			...options,
+			__eventName__: options?.__eventName__,
+		});
 	}
 }

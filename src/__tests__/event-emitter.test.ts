@@ -151,13 +151,15 @@ describe('BaseEventEmitter', () => {
 
 		const emitPromise = emitter.emit('test:event', { value: 1 }, { meta: 'x' });
 
-		jest.advanceTimersByTime(60);
+		await jest.advanceTimersByTimeAsync(60);
 		await emitPromise;
 
 		expect(order).toEqual(['first', 'second']);
 	});
 
 	test('Options passed to emit are used for EventTask (e.g., timeout)', async () => {
+		jest.useRealTimers();
+
 		const emitter = createEventEmitter<TEvents>();
 
 		const listener = jest.fn(
@@ -182,8 +184,6 @@ describe('BaseEventEmitter', () => {
 				throwOnError: true,
 			},
 		);
-
-		jest.advanceTimersByTime(150);
 
 		await expect(emitPromise).rejects.toBeInstanceOf(TaskTimeoutError);
 		expect(listener).toHaveBeenCalledTimes(1);

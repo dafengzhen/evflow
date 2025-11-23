@@ -1,6 +1,6 @@
 {
 	"name": "evflow",
-	"version": "0.1.44",
+	"version": "0.1.45",
 	"description": "A fully type-safe, feature-rich event system built with TypeScript, supporting",
 	"source": "./src/index.ts",
 	"types": "./dist/types/index.d.ts",
