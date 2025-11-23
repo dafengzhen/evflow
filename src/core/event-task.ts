@@ -60,35 +60,37 @@ export class TaskTimeoutError extends TaskError {
 export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 	implements IEventTask<T, K>
 {
-	private readonly payload: EventPayload<T, K>;
-
-	private readonly context: EventContext<T, K>;
-
 	private readonly handler: EventListener<T, K>;
+
+	private readonly payload?: EventPayload<T, K>;
+
+	private readonly context?: EventContext<T, K>;
 
 	private readonly options: EventTaskOptions<T, K>;
 
 	constructor(
-		payload: EventPayload<T, K>,
-		context: EventContext<T, K>,
 		handler: EventListener<T, K>,
-		options: EmitOptions<T, K>,
+		payload?: EventPayload<T, K>,
+		context?: EventContext<T, K>,
+		options?: EmitOptions<T, K>,
 	) {
+		this.handler = handler;
 		this.payload = payload;
 		this.context = context;
-		this.handler = handler;
+
+		const _options = options ?? {};
 		this.options = {
-			isRetryable: options.isRetryable ?? (() => false),
-			maxRetries: Math.max(0, options.maxRetries ?? 0),
-			onRetry: options.onRetry ?? (() => {}),
-			onStateChange: options.onStateChange ?? (() => {}),
-			onCancel: options.onCancel ?? (() => {}),
-			onTimeout: options.onTimeout ?? (() => {}),
-			retryDelay: options.retryDelay ?? 0,
-			signal: options.signal,
-			timeout: Math.max(0, options.timeout ?? 0),
-			throwOnError: options.throwOnError ?? false,
-			__eventName__: options.__eventName__,
+			isRetryable: _options.isRetryable ?? (() => false),
+			maxRetries: Math.max(0, _options.maxRetries ?? 0),
+			onRetry: _options.onRetry ?? (() => {}),
+			onStateChange: _options.onStateChange ?? (() => {}),
+			onCancel: _options.onCancel ?? (() => {}),
+			onTimeout: _options.onTimeout ?? (() => {}),
+			retryDelay: _options.retryDelay ?? 0,
+			signal: _options.signal,
+			timeout: Math.max(0, _options.timeout ?? 0),
+			throwOnError: _options.throwOnError ?? false,
+			__eventName__: _options.__eventName__,
 		};
 	}
 
@@ -169,7 +171,9 @@ export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 		}
 	}
 
-	private createExtendedContext(signal?: AbortSignal): EventContext<T, K> {
+	private createExtendedContext(
+		signal?: AbortSignal,
+	): EventContext<T, K> | undefined {
 		if (!signal) {
 			return this.context;
 		}

@@ -46,7 +46,7 @@ describe('EventTask', () => {
 		payload: EventPayload<TEvents, KTest> = { value: 42 },
 		context: EventContext<TEvents, KTest> = { meta: 'ctx' },
 	) =>
-		new EventTask<TEvents, KTest>(payload, context, handler, {
+		new EventTask<TEvents, KTest>(handler, payload, context, {
 			throwOnError: true,
 			...options,
 		} as EmitOptions<TEvents, KTest>);

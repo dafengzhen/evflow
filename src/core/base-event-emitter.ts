@@ -20,7 +20,7 @@ function createEmitContext<
 	K extends EventName<T>,
 >(
 	eventName: K,
-	payload: EventPayload<T, K>,
+	payload?: EventPayload<T, K>,
 	context?: EventContext<T, K>,
 	options?: EmitOptions<T, K>,
 ): EmitContext<T, K> {
@@ -118,7 +118,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 
 	async emit<K extends EventName<T>>(
 		eventName: K,
-		payload: EventPayload<T, K>,
+		payload?: EventPayload<T, K>,
 		context?: EventContext<T, K>,
 		options?: EmitOptions<T, K>,
 	): Promise<void> {
@@ -175,7 +175,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 
 	protected async dispatchEmit<K extends EventName<T>>(
 		eventName: K,
-		payload: EventPayload<T, K>,
+		payload?: EventPayload<T, K>,
 		context?: EventContext<T, K>,
 		options?: EmitOptions<T, K>,
 	): Promise<void> {
@@ -213,7 +213,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 			const exactBucket = exactByPriority.get(p);
 			if (exactBucket) {
 				for (const entry of exactBucket) {
-					await new EventTask(payload, context, entry.listener, {
+					await new EventTask(entry.listener, payload, context, {
 						...options,
 						__eventName__: eventName,
 					}).execute();
@@ -229,7 +229,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 					continue;
 				}
 
-				await new EventTask(payload, context, extra.listener, {
+				await new EventTask(extra.listener, payload, context, {
 					...options,
 					__eventName__: eventName,
 				}).execute();

@@ -1,12 +1,12 @@
 export type PlainObject = Record<string, unknown>;
 
-export type PositiveNumber = number & { __brand?: 'positive' };
+export interface BaseEventDefinition {
+	payload: PlainObject | undefined;
+	context?: PlainObject & BaseContext;
+}
 
 export interface BaseEventDefinitions {
-	[eventName: string]: {
-		payload: PlainObject;
-		context?: PlainObject & BaseContext;
-	};
+	[eventName: string]: BaseEventDefinition;
 }
 
 export type EventName<T extends BaseEventDefinitions> = Extract<
@@ -27,9 +27,7 @@ export type EventPayload<
 export type EventContext<
 	T extends BaseEventDefinitions,
 	K extends EventName<T>,
-> =
-	| (T[K] extends { context: infer C } ? C & BaseContext : BaseContext)
-	| undefined;
+> = T[K] extends { context: infer C } ? C & BaseContext : BaseContext;
 
 export type EventListener<
 	T extends BaseEventDefinitions,
@@ -64,27 +62,7 @@ export type EventState =
 	| 'cancelled'
 	| 'timeout';
 
-export interface EmitOptions<
-	T extends BaseEventDefinitions = BaseEventDefinitions,
-	K extends EventName<T> = EventName<T>,
-> {
-	timeout?: PositiveNumber;
-	signal?: AbortSignal;
-	maxRetries?: PositiveNumber;
-	retryDelay?: PositiveNumber | ((attempt: number) => PositiveNumber);
-	isRetryable?: (error: unknown) => boolean;
-	onRetry?: (attempt: number, error: unknown) => void;
-	onStateChange?: (state: EventState) => void;
-	onTimeout?: (timeout: number) => void;
-	onCancel?: () => void;
-	throwOnError?: boolean;
-	__eventName__?: K;
-}
-
-export interface EventTaskOptions<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> {
+export interface BaseTaskOptions {
 	timeout: number;
 	maxRetries: number;
 	signal?: AbortSignal;
@@ -95,6 +73,19 @@ export interface EventTaskOptions<
 	onTimeout: (timeout: number) => void;
 	onCancel: () => void;
 	throwOnError: boolean;
+}
+
+export interface EmitOptions<
+	T extends BaseEventDefinitions = BaseEventDefinitions,
+	K extends EventName<T> = EventName<T>,
+> extends Partial<BaseTaskOptions> {
+	__eventName__?: K;
+}
+
+export interface EventTaskOptions<
+	T extends BaseEventDefinitions,
+	K extends EventName<T>,
+> extends BaseTaskOptions {
 	__eventName__?: K;
 }
 
@@ -108,7 +99,7 @@ export interface OnceOptions extends Omit<OnOptions, 'once'> {}
 export interface IEventEmitterCore<T extends BaseEventDefinitions> {
 	emit<K extends EventName<T>>(
 		eventName: K,
-		payload: EventPayload<T, K>,
+		payload?: EventPayload<T, K>,
 		context?: EventContext<T, K>,
 		options?: EmitOptions<T, K>,
 	): Promise<void>;
@@ -208,17 +199,15 @@ export interface EmitContext<
 	K extends EventName<T> = EventName<T>,
 > {
 	eventName: K;
-	payload: EventPayload<T, K>;
+	payload?: EventPayload<T, K>;
 	context?: EventContext<T, K>;
 	options?: EmitOptions<T, K>;
 	isPropagationStopped(): boolean;
 	stopPropagation(): void;
 }
 
-export type EventMiddleware<T extends BaseEventDefinitions> = <
-	K extends EventName<T>,
->(
-	ctx: EmitContext<T, K>,
+export type EventMiddleware<T extends BaseEventDefinitions> = (
+	ctx: EmitContext<T>,
 	next: () => Promise<void>,
 ) => Promise<void>;
 
