@@ -207,7 +207,7 @@ export function createLoggingPlugin<T extends BaseEventDefinitions>(
 		const logEmits = options.logEmits !== false;
 		const logSuccess = options.logSuccess !== false;
 		const logErrors = options.logErrors !== false;
-		const logPayload = options.logPayload !== false; // 原来默认 true
+		const logPayload = options.logPayload !== false;
 		const logContext = !!options.logContext;
 		const logOptions = !!options.logOptions;
 		const hasFilter = typeof options.filterEvent === 'function';

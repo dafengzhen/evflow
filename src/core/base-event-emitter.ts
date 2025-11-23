@@ -24,12 +24,17 @@ import type {
 export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 	implements IEventEmitterWithMiddleware<T>
 {
-	private readonly listeners: Map<
+	private readonly listeners = new Map<
 		EventName<T>,
 		Map<number, Set<ListenerEntry<T, any>>>
-	> = new Map();
+	>();
 
-	private readonly middlewares: Set<EventMiddleware<T>> = new Set();
+	private readonly middlewares = new Set<EventMiddleware<T>>();
+
+	private middlewareChain?(
+		ctx: EmitContext<T>,
+		dispatch: () => Promise<void>,
+	): Promise<void>;
 
 	on<K extends EventName<T>>(
 		eventName: K,
@@ -97,8 +102,6 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 	): Promise<void> {
 		const ctx = this.createEmitContext(eventName, payload, context, options);
 
-		const middlewares = [...this.middlewares];
-
 		const dispatch = async () => {
 			if (ctx.isPropagationStopped()) {
 				return;
@@ -112,18 +115,15 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 			);
 		};
 
-		const composed = middlewares.reduceRight<() => Promise<void>>(
-			(next, mw) => {
-				return () => mw(ctx, next);
-			},
-			dispatch,
-		);
-
 		await this.beforeEmit(ctx);
 
 		let error: unknown;
 		try {
-			await composed();
+			if (this.middlewareChain) {
+				await this.middlewareChain(ctx, dispatch);
+			} else {
+				await dispatch();
+			}
 		} catch (err) {
 			error = err;
 			throw err;
@@ -134,9 +134,38 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 
 	use(middleware: EventMiddleware<T>): () => void {
 		this.middlewares.add(middleware);
+		this.rebuildMiddlewareChain();
 
 		return () => {
 			this.middlewares.delete(middleware);
+			this.rebuildMiddlewareChain();
+		};
+	}
+
+	private rebuildMiddlewareChain(): void {
+		const mws = [...this.middlewares];
+
+		if (mws.length === 0) {
+			this.middlewareChain = undefined;
+			return;
+		}
+
+		this.middlewareChain = async (
+			ctx: EmitContext<T>,
+			dispatch: () => Promise<void>,
+		): Promise<void> => {
+			let index = mws.length - 1;
+
+			const invoke = async (): Promise<void> => {
+				if (index < 0) {
+					return dispatch();
+				}
+
+				const mw = mws[index--];
+				await mw(ctx, invoke);
+			};
+
+			await invoke();
 		};
 	}
 
@@ -149,7 +178,9 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 	protected afterEmitExtra(
 		_eventName: EventName<T>,
 		_extraListeners: InternalListener<T>[],
-	): void {}
+	): void {
+		// no-op
+	}
 
 	protected async dispatchEmit<K extends EventName<T>>(
 		eventName: K,
@@ -158,15 +189,6 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		options?: EmitOptions<T, K>,
 	): Promise<void> {
 		const group = this.listeners.get(eventName);
-
-		const exactByPriority = new Map<number, Set<ListenerEntry<T, any>>>();
-
-		if (group) {
-			for (const [priority, bucket] of group.entries()) {
-				exactByPriority.set(priority, bucket);
-			}
-		}
-
 		const extraListeners = this.getExtraListenersForEmit(eventName) ?? [];
 
 		if (!group && extraListeners.length === 0) {
@@ -174,32 +196,42 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		}
 
 		const priorities = new Set<number>();
-
-		for (const p of exactByPriority.keys()) {
-			priorities.add(p);
+		if (group) {
+			for (const p of group.keys()) {
+				priorities.add(p);
+			}
 		}
 
 		for (const extra of extraListeners) {
 			priorities.add(extra.priority);
 		}
 
+		if (priorities.size === 0) {
+			return;
+		}
+
 		const sortedPriorities = [...priorities].sort((a, b) => b - a);
-		const toRemoveExact: { bucket: Set<any>; entry: any }[] = [];
+
+		const baseTaskOptions: EmitOptions<T, K> = {
+			...options,
+			__eventName__: eventName,
+		};
+
+		const toRemoveExact: Array<{
+			bucket: Set<ListenerEntry<T, any>>;
+			entry: ListenerEntry<T, any>;
+		}> = [];
 		const invokedExtra: InternalListener<T>[] = [];
 
-		for (const p of sortedPriorities) {
-			const exactBucket = exactByPriority.get(p);
-			if (exactBucket) {
-				for (const entry of exactBucket) {
-					const taskOptions = {
-						...options,
-						__eventName__: eventName,
-					};
+		for (const priority of sortedPriorities) {
+			const bucket = group?.get(priority);
+			if (bucket && bucket.size > 0) {
+				for (const entry of bucket) {
 					const task = this.createEventTask(
 						entry.listener,
 						payload,
 						context,
-						taskOptions,
+						baseTaskOptions,
 					);
 
 					try {
@@ -207,31 +239,27 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 					} catch (err) {
 						await this.onListenerError(eventName, err, entry.listener);
 
-						if (taskOptions.throwOnError) {
+						if (baseTaskOptions.throwOnError) {
 							throw err;
 						}
 					}
 
 					if (entry.once) {
-						toRemoveExact.push({ bucket: exactBucket, entry });
+						toRemoveExact.push({ bucket, entry });
 					}
 				}
 			}
 
 			for (const extra of extraListeners) {
-				if (extra.priority !== p) {
+				if (extra.priority !== priority) {
 					continue;
 				}
 
-				const taskOptions = {
-					...options,
-					__eventName__: eventName,
-				};
 				const task = this.createEventTask(
 					extra.listener,
 					payload,
 					context,
-					taskOptions,
+					baseTaskOptions,
 				);
 
 				try {
@@ -239,7 +267,7 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 				} catch (err) {
 					await this.onListenerError(eventName, err, extra.listener);
 
-					if (taskOptions.throwOnError) {
+					if (baseTaskOptions.throwOnError) {
 						throw err;
 					}
 				}
