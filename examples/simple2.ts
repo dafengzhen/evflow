@@ -12,8 +12,8 @@ const emitter = createEventEmitter<MicroEvents>();
 emitter.on('order:paid', async ({ orderId }) => {
 	console.log(`[Order] Paid ${orderId}`);
 	await emitter.emit('order:shipped', {
-		orderId,
 		expressId: 'SF123456',
+		orderId,
 	});
 });
 

@@ -81,8 +81,8 @@ describe('EventTask', () => {
 		const onStateChange = jest.fn();
 
 		const task = createTask(handler, {
-			maxRetries: 3 as any,
 			isRetryable: () => false,
+			maxRetries: 3 as any,
 			onRetry,
 			onStateChange,
 		});
@@ -115,11 +115,11 @@ describe('EventTask', () => {
 		const onStateChange = jest.fn();
 
 		const task = createTask(handler, {
-			maxRetries: 2 as any, // Up to 2 retries -> maximum 3 total executions
 			isRetryable: () => true,
-			retryDelay: 10 as any,
+			maxRetries: 2 as any, // Up to 2 retries -> maximum 3 total executions
 			onRetry,
 			onStateChange,
+			retryDelay: 10 as any,
 		});
 
 		const promise = task.execute();
@@ -166,10 +166,10 @@ describe('EventTask', () => {
 		const onStateChange = jest.fn();
 
 		const task = createTask(handler, {
-			timeout: 100 as any,
-			onTimeout,
-			onStateChange,
 			isRetryable: () => false,
+			onStateChange,
+			onTimeout,
+			timeout: 100 as any,
 		});
 
 		const promise = task.execute();
@@ -200,9 +200,9 @@ describe('EventTask', () => {
 		const onStateChange = jest.fn();
 
 		const task = createTask(handler, {
-			signal: ac.signal,
 			onCancel,
 			onStateChange,
+			signal: ac.signal,
 		});
 
 		await expect(task.execute()).rejects.toBeInstanceOf(TaskCancelledError);
@@ -228,11 +228,11 @@ describe('EventTask', () => {
 		const onStateChange = jest.fn();
 
 		const task = createTask(handler, {
-			signal: ac.signal,
-			timeout: 1000 as any,
+			isRetryable: () => false,
 			onCancel,
 			onStateChange,
-			isRetryable: () => false,
+			signal: ac.signal,
+			timeout: 1000 as any,
 		});
 
 		const promise = task.execute();
@@ -261,8 +261,8 @@ describe('EventTask', () => {
 		});
 
 		const task = createTask(handler, {
-			timeout: 100 as any,
 			signal: outer.signal,
+			timeout: 100 as any,
 		});
 
 		await task.execute();
@@ -277,11 +277,11 @@ describe('EventTask', () => {
 		const onCancel = jest.fn();
 
 		const task = createTask(handler, {
-			signal: ac.signal,
-			maxRetries: 1,
 			isRetryable: () => true,
-			retryDelay: 1000,
+			maxRetries: 1,
 			onCancel,
+			retryDelay: 1000,
+			signal: ac.signal,
 		});
 
 		const promise = task.execute();

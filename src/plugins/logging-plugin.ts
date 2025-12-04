@@ -135,17 +135,17 @@ function sanitizeEmitOptions<
 
 	return {
 		...rest,
-		timeout,
-		maxRetries,
-		retryDelay: typeof retryDelay === 'function' ? '[Function]' : retryDelay,
-		throwOnError,
 		__eventName__,
-		hasSignal: !!signal,
 		hasIsRetryable: !!isRetryable,
+		hasOnCancel: !!onCancel,
 		hasOnRetry: !!onRetry,
 		hasOnStateChange: !!onStateChange,
 		hasOnTimeout: !!onTimeout,
-		hasOnCancel: !!onCancel,
+		hasSignal: !!signal,
+		maxRetries,
+		retryDelay: typeof retryDelay === 'function' ? '[Function]' : retryDelay,
+		throwOnError,
+		timeout,
 	};
 }
 
@@ -169,26 +169,26 @@ function wrapEmitOptionsWithLogging<
 
 	return {
 		...options,
-		onStateChange: (state: EventState) => {
-			logger('debug', 'event state change', { eventName, state });
-			originalOnStateChange?.(state);
-		},
-		onRetry: (attempt: number, error: unknown) => {
-			logger('warn', 'event retry', { eventName, attempt, error });
-			originalOnRetry?.(attempt, error);
-		},
-		onTimeout: (timeout: number) => {
-			logger('warn', 'event timeout', { eventName, timeout });
-			originalOnTimeout?.(timeout);
+		isRetryable: (error: unknown) => {
+			const result = originalIsRetryable ? originalIsRetryable(error) : true;
+			logger('debug', 'isRetryable check', { error, eventName, result });
+			return result;
 		},
 		onCancel: () => {
 			logger('info', 'event cancelled', { eventName });
 			originalOnCancel?.();
 		},
-		isRetryable: (error: unknown) => {
-			const result = originalIsRetryable ? originalIsRetryable(error) : true;
-			logger('debug', 'isRetryable check', { eventName, error, result });
-			return result;
+		onRetry: (attempt: number, error: unknown) => {
+			logger('warn', 'event retry', { attempt, error, eventName });
+			originalOnRetry?.(attempt, error);
+		},
+		onStateChange: (state: EventState) => {
+			logger('debug', 'event state change', { eventName, state });
+			originalOnStateChange?.(state);
+		},
+		onTimeout: (timeout: number) => {
+			logger('warn', 'event timeout', { eventName, timeout });
+			originalOnTimeout?.(timeout);
 		},
 	};
 }
@@ -230,12 +230,12 @@ export function createLoggingPlugin<T extends BaseEventDefinitions>(
 
 			if (logEmits) {
 				logger('info', 'emit start', {
-					eventName,
-					payload: logPayload ? emitCtx.payload : undefined,
 					context: logContext ? emitCtx.context : undefined,
+					eventName,
 					options: logOptions
 						? sanitizeEmitOptions(emitCtx.options)
 						: undefined,
+					payload: logPayload ? emitCtx.payload : undefined,
 				});
 			}
 
@@ -261,17 +261,17 @@ export function createLoggingPlugin<T extends BaseEventDefinitions>(
 				if (logSuccess) {
 					const duration = needDuration ? Date.now() - start : undefined;
 					logger('info', 'emit success', {
-						eventName,
 						duration,
+						eventName,
 					});
 				}
 			} catch (error) {
 				if (logErrors) {
 					const duration = needDuration ? Date.now() - start : undefined;
 					logger('error', 'emit error', {
-						eventName,
 						duration,
 						error,
+						eventName,
 					});
 				}
 				// Preserve original behavior

@@ -80,17 +80,17 @@ export class EventTask<T extends BaseEventDefinitions, K extends EventName<T>>
 
 		const _options = options ?? {};
 		this.options = {
+			__eventName__: _options.__eventName__,
 			isRetryable: _options.isRetryable ?? (() => false),
 			maxRetries: Math.max(0, _options.maxRetries ?? 0),
+			onCancel: _options.onCancel ?? (() => {}),
 			onRetry: _options.onRetry ?? (() => {}),
 			onStateChange: _options.onStateChange ?? (() => {}),
-			onCancel: _options.onCancel ?? (() => {}),
 			onTimeout: _options.onTimeout ?? (() => {}),
 			retryDelay: _options.retryDelay ?? 0,
 			signal: _options.signal,
-			timeout: Math.max(0, _options.timeout ?? 0),
 			throwOnError: _options.throwOnError ?? false,
-			__eventName__: _options.__eventName__,
+			timeout: Math.max(0, _options.timeout ?? 0),
 		};
 	}
 

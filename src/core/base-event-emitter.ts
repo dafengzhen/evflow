@@ -329,16 +329,16 @@ export abstract class BaseEventEmitter<T extends BaseEventDefinitions>
 		let stopped = false;
 
 		return {
-			eventName,
-			payload,
 			context,
+			eventName,
+			isPropagationStopped() {
+				return stopped;
+			},
 			options: {
 				...options,
 				__eventName__: eventName,
 			},
-			isPropagationStopped() {
-				return stopped;
-			},
+			payload,
 			stopPropagation() {
 				stopped = true;
 			},

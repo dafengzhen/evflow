@@ -117,8 +117,8 @@ async function demo() {
 
 	// Create order
 	await emitter.emit('order:create', {
-		orderId: 'order_001',
 		amount: 199.99,
+		orderId: 'order_001',
 	});
 
 	console.log('\n---\n');

@@ -43,9 +43,8 @@ export class PluginManager<T extends BaseEventDefinitions> {
 		};
 
 		const ctx: PluginContext<T> = {
-			meta,
-
 			emitter: this.emitter,
+			meta,
 
 			on: <K extends EventName<T>>(
 				eventName: K,
@@ -67,16 +66,6 @@ export class PluginManager<T extends BaseEventDefinitions> {
 				return off;
 			},
 
-			onPattern: (
-				pattern: string,
-				listener: WildcardEventListener<T>,
-				options?: OnOptions,
-			) => {
-				const off = this.emitter.onPattern(pattern, listener, options);
-				registerCleanup(off);
-				return off;
-			},
-
 			oncePattern: (
 				pattern: string,
 				listener: WildcardEventListener<T>,
@@ -87,13 +76,23 @@ export class PluginManager<T extends BaseEventDefinitions> {
 				return off;
 			},
 
-			use: (middleware: EventMiddleware<T>) => {
-				const off = this.emitter.use(middleware);
+			onPattern: (
+				pattern: string,
+				listener: WildcardEventListener<T>,
+				options?: OnOptions,
+			) => {
+				const off = this.emitter.onPattern(pattern, listener, options);
 				registerCleanup(off);
 				return off;
 			},
 
 			registerCleanup,
+
+			use: (middleware: EventMiddleware<T>) => {
+				const off = this.emitter.use(middleware);
+				registerCleanup(off);
+				return off;
+			},
 		};
 
 		plugin(ctx);
@@ -108,7 +107,7 @@ export class PluginManager<T extends BaseEventDefinitions> {
 			this.plugins.delete(meta.name);
 		};
 
-		this.plugins.set(meta.name, { meta, dispose });
+		this.plugins.set(meta.name, { dispose, meta });
 
 		return dispose;
 	}

@@ -28,9 +28,9 @@ interface AppEvents extends BaseEventDefinitions {
 }
 
 const LoggingPlugin = createLoggingPlugin<AppEvents>({
+	filterEvent: (name) => !name.startsWith('internal:'),
 	logContext: false,
 	logOptions: false,
-	filterEvent: (name) => !name.startsWith('internal:'),
 });
 
 async function bootstrap() {

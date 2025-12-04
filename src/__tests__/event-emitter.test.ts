@@ -178,10 +178,10 @@ describe('BaseEventEmitter', () => {
 			{ value: 1 },
 			{ meta: 'x' },
 			{
-				timeout: 100,
 				isRetryable: () => false,
 				onTimeout,
 				throwOnError: true,
+				timeout: 100,
 			},
 		);
 

@@ -69,11 +69,11 @@ export class WildcardPatternMatcher<T extends BaseEventDefinitions>
 		options: OnOptions = {},
 	): () => void {
 		const entry: InternalEntry<T> = {
-			pattern,
-			regex: compileWildcard(pattern),
 			listener,
 			once: !!options.once,
+			pattern,
 			priority: options.priority ?? 0,
+			regex: compileWildcard(pattern),
 		};
 
 		this.entries.add(entry);
@@ -105,9 +105,9 @@ export class WildcardPatternMatcher<T extends BaseEventDefinitions>
 		for (const entry of this.entries) {
 			if (entry.regex.test(name)) {
 				matched.push({
-					pattern: entry.pattern,
 					listener: entry.listener,
 					once: entry.once,
+					pattern: entry.pattern,
 					priority: entry.priority,
 				});
 			}

@@ -33,10 +33,10 @@ emitter.on(
 
 await emitter.emit(
 	'user:registered',
-	{ userId: 'u_001', email: 'test@example.com' },
+	{ email: 'test@example.com', userId: 'u_001' },
 	undefined,
 	{
-		maxRetries: 2,
 		isRetryable: () => true,
+		maxRetries: 2,
 	},
 );

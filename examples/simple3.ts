@@ -31,7 +31,7 @@ await emitter.emit(
 	{ taskId: 't001' },
 	{ signal: undefined },
 	{
-		timeout: 1000, // 1 second timeout
 		onTimeout: (t) => console.log(`Task timed out (${t}ms)`),
+		timeout: 1000, // 1 second timeout
 	},
 );

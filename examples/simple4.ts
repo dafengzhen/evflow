@@ -53,8 +53,8 @@ async function main() {
 
 	// Publish order-related events
 	await emitter.emit('order.created', {
-		id: 'order-789',
 		amount: 99.99,
+		id: 'order-789',
 	});
 
 	await emitter.emit('order.updated', {

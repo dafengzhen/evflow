@@ -55,9 +55,9 @@ export class WildcardEventEmitter<T extends BaseEventDefinitions>
 
 		return matched.map<InternalListener<T>>((m) => ({
 			listener: m.listener,
+			meta: { pattern: m.pattern, type: 'pattern' },
 			once: m.once,
 			priority: m.priority,
-			meta: { pattern: m.pattern, type: 'pattern' },
 		}));
 	}
 
