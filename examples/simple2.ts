@@ -1,27 +1,29 @@
-import type { BaseEventDefinitions } from '../src/core/types.ts';
-import { createEventEmitter } from '../src/index.ts';
+type Events = {
+  'order.created': { payload: { orderId: string } };
+  'user.created': { payload: { id: string } };
+  'user.deleted': { payload: { id: string } };
+};
 
-interface MicroEvents extends BaseEventDefinitions {
-	'order:paid': { payload: { orderId: string } };
-	'order:shipped': { payload: { orderId: string; expressId: string } };
-}
+const bus = new EventBus<Events>();
 
-const emitter = createEventEmitter<MicroEvents>();
-
-// Order payment → Trigger shipment
-emitter.on('order:paid', async ({ orderId }) => {
-	console.log(`[Order] Paid ${orderId}`);
-	await emitter.emit('order:shipped', {
-		expressId: 'SF123456',
-		orderId,
-	});
+bus.on('user.created', async (payload) => {
+  // payload: { id: string }
 });
 
-// Shipment event → Write log
-emitter.on('order:shipped', async ({ orderId, expressId }) => {
-	console.log(
-		`[Shipment] Order ${orderId} has been shipped (Tracking number: ${expressId})`,
-	);
+(bus as MatchSupport<Events>).match('user.*', async (payload) => {
+  console.log('any user event', payload);
 });
 
-await emitter.emit('order:paid', { orderId: 'o008' });
+(bus as MiddlewareSupport<Events>).use(async (ctx, next) => {
+  const start = Date.now();
+  console.log('[event]', ctx.eventName, ctx.payload);
+  try {
+    await next();
+    console.log('[event-ok]', ctx.eventName, Date.now() - start, 'ms');
+  } catch (e) {
+    console.error('[event-error]', ctx.eventName, e);
+    throw e;
+  }
+});
+
+await bus.emit('user.created', { id: '123' });

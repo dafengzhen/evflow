@@ -1,42 +1,48 @@
 import type { BaseEventDefinitions } from '../src/core/types.ts';
-import { createEventEmitter } from '../src/index.ts';
 
-interface AppEvents extends BaseEventDefinitions {
-	'user:registered': {
-		payload: {
-			userId: string;
-			email: string;
-		};
-	};
+import { MiddlewareEventEmitter } from '../src/index.ts';
+
+interface MyEvents extends BaseEventDefinitions {
+  orderPlaced: { payload: { amount: number; id: string; } };
+  userCreated: { payload: { id: string; name: string } };
 }
 
-const emitter = createEventEmitter<AppEvents>();
+const emitter = new MiddlewareEventEmitter<MyEvents>();
 
-// High priority: Send welcome email
-emitter.on(
-	'user:registered',
-	async ({ email }) => {
-		console.log(`[Email] Sending welcome email to ${email}`);
-		// Simulate success
-	},
-	{ priority: 10 },
-);
+emitter.use(async (ctx, next) => {
+  console.log(`[event] ${ctx.eventName} start`, ctx.payload);
+  const start = Date.now();
 
-// Low priority: Create default user configuration
-emitter.on(
-	'user:registered',
-	async ({ userId }) => {
-		console.log(`[Config] Creating initial configuration for ${userId}`);
-	},
-	{ priority: 0 },
-);
+  try {
+    await next();
+    console.log(`[event] ${ctx.eventName} done in ${Date.now() - start}ms`);
+  } catch (err) {
+    console.error(`[event] ${ctx.eventName} error`, err);
+    throw err;
+  }
+});
 
-await emitter.emit(
-	'user:registered',
-	{ email: 'test@example.com', userId: 'u_001' },
-	undefined,
-	{
-		isRetryable: () => true,
-		maxRetries: 2,
-	},
-);
+const disposeTrim = emitter.use(async (ctx, next) => {
+  if (ctx.eventName === 'userCreated' && ctx.payload) {
+    ctx.payload = {
+      ...ctx.payload,
+      name: (ctx.payload as any).name.trim()
+    };
+  }
+  await next();
+});
+
+disposeTrim();
+
+emitter.on('userCreated', async (payload) => {
+  console.log('save user to db:', payload);
+});
+
+emitter.on('userCreated', async (payload) => {
+  console.log('send welcome email:', payload.id);
+});
+
+await emitter.emit('userCreated', {
+  id: 'u_1',
+  name: '  Alice  '
+});

@@ -1,23 +1,16 @@
-import { BaseEventEmitter } from './base-event-emitter.ts';
-import { createEventEmitter } from './create-event-emitter.ts';
-import {
-	EventTask,
-	TaskCancelledError,
-	TaskError,
-	TaskTimeoutError,
-} from './event-task.ts';
-import { PluginManager } from './plugin-manager.ts';
-import { WildcardEventEmitter } from './wildcard-event-emitter.ts';
-import { WildcardPatternMatcher } from './wildcard-pattern-matcher.ts';
+import { AbstractEventEmitter } from './abstract-event-emitter.ts';
+import { Executor, ExecutorCancelledError, ExecutorError, ExecutorTimeoutError } from './executor.ts';
+import { compileWildcard, escapeRegexChar, MatchableEventEmitter } from './matchable-event-emitter.ts';
+import { MiddlewareEventEmitter } from './middleware-event-emitter.ts';
 
 export {
-	BaseEventEmitter,
-	EventTask,
-	TaskCancelledError,
-	TaskError,
-	TaskTimeoutError,
-	WildcardEventEmitter,
-	WildcardPatternMatcher,
-	createEventEmitter,
-	PluginManager,
+  AbstractEventEmitter,
+  compileWildcard,
+  escapeRegexChar,
+  Executor,
+  ExecutorCancelledError,
+  ExecutorError,
+  ExecutorTimeoutError,
+  MatchableEventEmitter,
+  MiddlewareEventEmitter
 };

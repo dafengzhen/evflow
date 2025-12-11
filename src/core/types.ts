@@ -1,266 +1,188 @@
-export type PlainObject = Record<string, unknown>;
+import type { MiddlewareEventEmitter } from './middleware-event-emitter.ts';
 
-export interface BaseEventDefinition {
-	payload: PlainObject | undefined;
-	context?: PlainObject & BaseContext;
+export interface AbortOptions {
+  onCancel: () => void;
+  signal?: AbortSignal;
+}
+
+export interface BaseEventDefinition<P = undefined> {
+  payload: P;
 }
 
 export interface BaseEventDefinitions {
-	[eventName: string]: BaseEventDefinition;
+  [eventName: string]: BaseEventDefinition<unknown>;
 }
 
-export type EventName<T extends BaseEventDefinitions> = Extract<
-	keyof T,
-	string
->;
+export type BaseOptions = AbortOptions &
+  LifecycleOptions &
+  RetryOptions &
+  TimeoutOptions;
 
-export interface BaseContext {
-	signal?: AbortSignal;
-	[key: string]: unknown;
+export interface ConfigurableEventEmitter<T extends BaseEventDefinitions>
+  extends EventEmitter<T> {
+  configure(config: Partial<EventEmitterConfig>): void;
+
+  getConfig(): Readonly<EventEmitterConfig>;
 }
 
-export type EventPayload<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> = T[K]['payload'];
+export type Ctor<T = object> = new (...args: any[]) => T;
 
-export type EventContext<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> = T[K] extends { context: infer C } ? C & BaseContext : BaseContext;
+export type DefaultBaseOptions = {
+  maxRetries: 3;
+  onCancel: () => void;
+  onRetryAttempt: () => void;
+  onStateChange: () => void;
+  onTimeout: () => void;
+  retryDelay: 1000;
+  shouldRetry: () => false;
+  throwOnError: false;
+  timeout: 30000;
+};
+
+export type EmitOptions = Partial<BaseOptions>
+
+export interface EventBusOptions {
+  middleware?: boolean;
+  wildcard?: boolean;
+}
+
+export interface EventContext<T extends BaseEventDefinitions> {
+  emitter: MiddlewareEventEmitter<T>;
+  eventName: EventName<T>;
+  options?: ExecOptions;
+  payload: EventPayload<T, EventName<T>> | undefined;
+  state: EventPlainObject;
+}
+
+export interface EventEmitter<T extends BaseEventDefinitions> {
+  emit<K extends EventName<T>>(
+    eventName: K,
+    payload?: EventPayload<T, K>,
+    options?: EmitOptions
+  ): Promise<void>;
+
+  off<K extends EventName<T>>(
+    eventName: K,
+    listener: EventListener<T, K>
+  ): void;
+
+  on<K extends EventName<T>>(
+    eventName: K,
+    listener: EventListener<T, K>,
+    options?: OnOptions
+  ): () => void;
+
+  once<K extends EventName<T>>(
+    eventName: K,
+    listener: EventListener<T, K>,
+    options?: OnceOptions
+  ): () => void;
+}
+
+
+export type EventEmitterConfig = object;
 
 export type EventListener<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> = (
-	payload: EventPayload<T, K>,
-	context?: EventContext<T, K>,
-	options?: EmitOptions<T, K>,
-) => Promise<void>;
-
-export type AnyEventPayload<T extends BaseEventDefinitions> =
-	T[EventName<T>]['payload'];
-
-export type AnyEventContext<T extends BaseEventDefinitions> =
-	| (T[EventName<T>] extends { context: infer C }
-			? C & BaseContext
-			: BaseContext)
-	| undefined;
-
-export type WildcardEventListener<T extends BaseEventDefinitions> = (
-	payload: AnyEventPayload<T>,
-	context?: AnyEventContext<T>,
-	options?: EmitOptions<T>,
-) => Promise<void>;
-
-export type EventState =
-	| 'pending'
-	| 'running'
-	| 'retrying'
-	| 'succeeded'
-	| 'failed'
-	| 'cancelled'
-	| 'timeout';
-
-export interface BaseTaskOptions {
-	timeout: number;
-	maxRetries: number;
-	signal?: AbortSignal;
-	retryDelay: number | ((attempt: number) => number);
-	isRetryable: (error: unknown) => boolean;
-	onRetry: (attempt: number, error: unknown) => void;
-	onStateChange: (state: EventState) => void;
-	onTimeout: (timeout: number) => void;
-	onCancel: () => void;
-	throwOnError: boolean;
-}
-
-export interface EmitOptions<
-	T extends BaseEventDefinitions = BaseEventDefinitions,
-	K extends EventName<T> = EventName<T>,
-> extends Partial<BaseTaskOptions> {
-	__eventName__?: K;
-}
-
-export interface EventTaskOptions<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> extends BaseTaskOptions {
-	__eventName__?: K;
-}
-
-export interface OnOptions {
-	priority?: number;
-	once?: boolean;
-}
-
-export interface OnceOptions extends Omit<OnOptions, 'once'> {}
-
-export interface IEventEmitterCore<T extends BaseEventDefinitions> {
-	emit<K extends EventName<T>>(
-		eventName: K,
-		payload?: EventPayload<T, K>,
-		context?: EventContext<T, K>,
-		options?: EmitOptions<T, K>,
-	): Promise<void>;
-
-	on<K extends EventName<T>>(
-		eventName: K,
-		listener: EventListener<T, K>,
-		options?: OnOptions,
-	): () => void;
-
-	once<K extends EventName<T>>(
-		eventName: K,
-		listener: EventListener<T, K>,
-		options?: OnceOptions,
-	): () => void;
-
-	off<K extends EventName<T>>(
-		eventName: K,
-		listener: EventListener<T, K>,
-	): void;
-}
-
-export interface IWildcardEventEmitter<T extends BaseEventDefinitions>
-	extends IEventEmitterCore<T> {
-	onPattern(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnOptions,
-	): () => void;
-
-	oncePattern(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnceOptions,
-	): () => void;
-
-	offPattern(pattern: string, listener: WildcardEventListener<T>): void;
-}
-
-export interface InternalListener<T extends BaseEventDefinitions> {
-	listener: EventListener<T, any>;
-	once: boolean;
-	priority: number;
-	meta?: Record<string, unknown>;
-}
-
-export interface ListenerEntry<
-	T extends BaseEventDefinitions,
-	K extends EventName<T>,
-> {
-	listener: EventListener<T, K>;
-	once: boolean;
-}
-
-export interface IEventTask<
-	T extends BaseEventDefinitions,
-	_K extends EventName<T>,
-> {
-	execute(): Promise<void>;
-}
-
-export interface MatchedListener<T extends BaseEventDefinitions> {
-	pattern: string;
-	listener: WildcardEventListener<T>;
-	once: boolean;
-	priority: number;
-}
-
-export interface IEventPatternMatcher<T extends BaseEventDefinitions> {
-	add(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnOptions,
-	): () => void;
-
-	addOnce(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnceOptions,
-	): () => void;
-
-	remove(pattern: string, listener: WildcardEventListener<T>): void;
-
-	match<K extends EventName<T>>(eventName: K): MatchedListener<T>[];
-}
-
-export interface InternalEntry<T extends BaseEventDefinitions> {
-	pattern: string;
-	regex: RegExp;
-	listener: WildcardEventListener<T>;
-	once: boolean;
-	priority: number;
-}
-
-export interface EmitContext<
-	T extends BaseEventDefinitions,
-	K extends EventName<T> = EventName<T>,
-> {
-	eventName: K;
-	payload?: EventPayload<T, K>;
-	context?: EventContext<T, K>;
-	options?: EmitOptions<T, K>;
-	isPropagationStopped(): boolean;
-	stopPropagation(): void;
-}
+  T extends BaseEventDefinitions,
+  K extends EventName<T>,
+> = (payload: EventPayload<T, K>) => Promise<void>;
 
 export type EventMiddleware<T extends BaseEventDefinitions> = (
-	ctx: EmitContext<T>,
-	next: () => Promise<void>,
+  ctx: EventContext<T>,
+  next: () => Promise<void>
 ) => Promise<void>;
 
-export interface IEventEmitterWithMiddleware<T extends BaseEventDefinitions>
-	extends IEventEmitterCore<T> {
-	use(middleware: EventMiddleware<T>): () => void;
+export type EventName<T extends BaseEventDefinitions> = Extract<
+  keyof T,
+  string
+>;
+
+export type EventPayload<
+  T extends BaseEventDefinitions,
+  K extends EventName<T>,
+> = T[K]['payload'];
+
+export type EventPlainObject = Record<string, unknown>;
+
+export type EventState =
+  | 'cancelled'
+  | 'failed'
+  | 'pending'
+  | 'retrying'
+  | 'running'
+  | 'succeeded'
+  | 'timeout';
+
+export type ExecOptions = BaseOptions
+
+export interface LifecycleOptions {
+  onStateChange: (state: EventState) => void;
+  throwOnError: boolean;
 }
 
-export interface PluginMeta {
-	name: string;
-	version?: string;
-	dependencies?: string[];
+
+export interface ListenerEntry<
+  T extends BaseEventDefinitions,
+  K extends EventName<T>,
+> {
+  eventName: EventName<T>;
+  listener: EventListener<T, K>;
+  once?: boolean;
+  priority?: number;
 }
 
-export interface PluginContext<T extends BaseEventDefinitions> {
-	meta: PluginMeta;
+export interface MatchSupport<T extends BaseEventDefinitions> {
+  match(
+    pattern: string,
+    listener: EventListener<T, any>,
+    options?: OnOptions
+  ): () => void;
 
-	emitter: IEventEmitterWithMiddleware<T> & IWildcardEventEmitter<T>;
+  matchOnce(
+    pattern: string,
+    listener: EventListener<T, any>,
+    options?: OnceOptions
+  ): () => void;
 
-	on<K extends EventName<T>>(
-		eventName: K,
-		listener: EventListener<T, K>,
-		options?: OnOptions,
-	): () => void;
-
-	once<K extends EventName<T>>(
-		eventName: K,
-		listener: EventListener<T, K>,
-		options?: OnceOptions,
-	): () => void;
-
-	onPattern(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnOptions,
-	): () => void;
-
-	oncePattern(
-		pattern: string,
-		listener: WildcardEventListener<T>,
-		options?: OnceOptions,
-	): () => void;
-
-	use(middleware: EventMiddleware<T>): () => void;
-
-	registerCleanup(fn: () => void): void;
+  unmatch(
+    pattern: string,
+    listener: EventListener<T, any>
+  ): void;
 }
 
-export type EventPlugin<T extends BaseEventDefinitions> = (
-	ctx: PluginContext<T>,
-) => void;
-
-export interface LoadedPlugin {
-	meta: PluginMeta;
-	dispose: () => void;
+export interface MiddlewareSupport<T extends BaseEventDefinitions> {
+  use(middleware: EventMiddleware<T>): () => void;
 }
+
+export type OnceOptions = Omit<OnOptions, 'once'>
+
+export interface OnOptions {
+  once?: boolean;
+  priority?: number;
+}
+
+export interface PatternListenerEntry<T extends BaseEventDefinitions> {
+  listener: EventListener<T, any>;
+  once?: boolean;
+  pattern: string;
+  priority?: number;
+}
+
+export interface RetryOptions {
+  maxRetries: number;
+  onRetryAttempt: (attempt: number, error: unknown) => void;
+  retryDelay: ((attempt: number) => number) | number;
+  shouldRetry: (error: unknown) => boolean;
+}
+
+export interface TimeoutOptions {
+  onTimeout: (timeout: number) => void;
+  timeout: number;
+}
+
+export interface WildcardCompileOptions {
+  cache?: Map<string, RegExp>;
+  flags?: string;
+  separator?: string;
+}
+
