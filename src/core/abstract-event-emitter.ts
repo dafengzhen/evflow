@@ -1,15 +1,15 @@
 import type {
-	BaseEventDefinitions,
-	ConfigurableEventEmitter,
-	EmitOptions,
-	EventEmitterConfig,
-	EventListener,
-	EventName,
-	EventPayload,
-	ExecOptions,
-	ListenerEntry,
-	OnceOptions,
-	OnOptions
+  BaseEventDefinitions,
+  ConfigurableEventEmitter,
+  EmitOptions,
+  EventEmitterConfig,
+  EventListener,
+  EventName,
+  EventPayload,
+  ExecOptions,
+  ListenerEntry,
+  OnceOptions,
+  OnOptions,
 } from './types.ts';
 
 import { Executor } from './executor.ts';
@@ -19,14 +19,12 @@ import { Executor } from './executor.ts';
  *
  * @author dafengzhen
  */
-export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
-  implements ConfigurableEventEmitter<T> {
+export abstract class AbstractEventEmitter<T extends BaseEventDefinitions> implements ConfigurableEventEmitter<T> {
   protected config: EventEmitterConfig;
 
   protected initialized = false;
 
-  protected readonly listeners: Map<EventName<T>, ListenerEntry<T, any>[]> =
-    new Map();
+  protected readonly listeners: Map<EventName<T>, ListenerEntry<T, any>[]> = new Map();
 
   private initializePromise: null | Promise<void> = null;
 
@@ -41,22 +39,7 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     this.config = { ...this.config, ...config };
   }
 
-  async destroy(): Promise<void> {
-    if (!this.initialized) {
-      this.listeners.clear();
-      return;
-    }
-
-    await this.onDestroy?.();
-    this.listeners.clear();
-    this.initialized = false;
-  }
-
-  async emit<K extends EventName<T>>(
-    eventName: K,
-    payload?: EventPayload<T, K>,
-    options?: EmitOptions
-  ): Promise<void> {
+  async emit<K extends EventName<T>>(eventName: K, payload?: EventPayload<T, K>, options?: EmitOptions): Promise<void> {
     await this.initialize();
 
     const execOptions = options as ExecOptions | undefined;
@@ -68,28 +51,7 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     return { ...this.config };
   }
 
-  async initialize(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    if (!this.initializePromise) {
-      this.initializePromise = (async () => {
-        await this.onInitialize?.();
-        await this.performInitialization?.();
-        this.initialized = true;
-      })().finally(() => {
-        this.initializePromise = null;
-      });
-    }
-
-    return this.initializePromise;
-  }
-
-  off<K extends EventName<T>>(
-    eventName: K,
-    listener: EventListener<T, K>
-  ): void {
+  off<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>): void {
     const arr = this.listeners.get(eventName);
     if (!arr || arr.length === 0) {
       return;
@@ -103,19 +65,14 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     }
   }
 
-  on<K extends EventName<T>>(
-    eventName: K,
-    listener: EventListener<T, K>,
-    options?: OnOptions
-  ): () => void {
-    const arr =
-      this.listeners.get(eventName) ?? this.ensureListenerArray(eventName);
+  on<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnOptions): () => void {
+    const arr = this.listeners.get(eventName) ?? this.ensureListenerArray(eventName);
 
     arr.push({
       eventName,
       listener,
       once: options?.once ?? false,
-      priority: options?.priority ?? 0
+      priority: options?.priority ?? 0,
     });
 
     if (arr.length > 1) {
@@ -125,11 +82,7 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     return () => this.off(eventName, listener);
   }
 
-  once<K extends EventName<T>>(
-    eventName: K,
-    listener: EventListener<T, K>,
-    options?: OnceOptions
-  ): () => void {
+  once<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnceOptions): () => void {
     return this.on(eventName, listener, { ...options, once: true });
   }
 
@@ -154,10 +107,18 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     }
   }
 
-  protected async executeListeners(
-    entries: (() => Promise<void>)[],
-    _options?: ExecOptions
-  ): Promise<void> {
+  protected async destroy(): Promise<void> {
+    if (!this.initialized) {
+      this.listeners.clear();
+      return;
+    }
+
+    await this.onDestroy?.();
+    this.listeners.clear();
+    this.initialized = false;
+  }
+
+  protected async executeListeners(entries: (() => Promise<void>)[], _options?: ExecOptions): Promise<void> {
     for (const exec of entries) {
       await exec();
     }
@@ -167,6 +128,23 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
     return {};
   }
 
+  protected async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    if (!this.initializePromise) {
+      this.initializePromise = (async () => {
+        await this.onInitialize?.();
+        await this.performInitialization?.();
+        this.initialized = true;
+      })().finally(() => {
+        this.initializePromise = null;
+      });
+    }
+
+    return this.initializePromise;
+  }
 
   protected onDestroy?(): Promise<void> | void;
 
@@ -177,7 +155,7 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
   protected async runAllListeners<K extends EventName<T>>(
     eventName: K,
     payload?: EventPayload<T, K>,
-    options?: ExecOptions
+    options?: ExecOptions,
   ): Promise<void> {
     const entries = this.listeners.get(eventName);
     if (!entries || entries.length === 0) {
@@ -188,7 +166,7 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
 
     await this.executeListeners(
       snapshot.map((entry) => this.wrapListener(entry, payload, options)),
-      options
+      options,
     );
 
     this.cleanupOnceListeners(snapshot);
@@ -197,14 +175,12 @@ export abstract class AbstractEventEmitter<T extends BaseEventDefinitions>
   protected wrapListener(
     entry: ListenerEntry<T, any>,
     payload?: EventPayload<T, any>,
-    options?: ExecOptions
+    options?: ExecOptions,
   ): () => Promise<void> {
     return () => new Executor(() => entry.listener(payload), options).execute();
   }
 
-  private ensureListenerArray<K extends EventName<T>>(
-    eventName: K
-  ): ListenerEntry<T, any>[] {
+  private ensureListenerArray<K extends EventName<T>>(eventName: K): ListenerEntry<T, any>[] {
     const arr: ListenerEntry<T, any>[] = [];
     this.listeners.set(eventName, arr);
     return arr;

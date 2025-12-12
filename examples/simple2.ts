@@ -1,20 +1,31 @@
+import { createEventEmitter } from '../src/index.ts';
+
 type Events = {
   'order.created': { payload: { orderId: string } };
   'user.created': { payload: { id: string } };
   'user.deleted': { payload: { id: string } };
 };
 
-const bus = new EventBus<Events>();
-
-bus.on('user.created', async (payload) => {
-  // payload: { id: string }
+const bus = createEventEmitter<
+  Events,
+  {
+    middleware: true;
+    wildcard: true;
+  }
+>({
+  middleware: true,
+  wildcard: true
 });
 
-(bus as MatchSupport<Events>).match('user.*', async (payload) => {
+bus.on('user.created', async (payload) => {
+  console.log(payload);
+});
+
+bus.match('user.*', async (payload) => {
   console.log('any user event', payload);
 });
 
-(bus as MiddlewareSupport<Events>).use(async (ctx, next) => {
+bus.use(async (ctx, next) => {
   const start = Date.now();
   console.log('[event]', ctx.eventName, ctx.payload);
   try {

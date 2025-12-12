@@ -1,23 +1,35 @@
 import {
-	AbstractEventEmitter,
-	compileWildcard,
-	escapeRegexChar,
-	Executor,
-	ExecutorCancelledError,
-	ExecutorError,
-	ExecutorTimeoutError,
-	MatchableEventEmitter,
-	MiddlewareEventEmitter
-} from './core/index.ts';
-
-export {
   AbstractEventEmitter,
   compileWildcard,
+  composeMixins,
+  createEventEmitter,
+  createMiddlewareEventEmitter,
+  createWildcardEventEmitter,
+  defineEventEmitterClass,
+  defineMiddlewareEventEmitter,
+  defineWildcardEventEmitter,
   escapeRegexChar,
   Executor,
   ExecutorCancelledError,
   ExecutorError,
   ExecutorTimeoutError,
-  MatchableEventEmitter,
-  MiddlewareEventEmitter
+  Types,
+} from './core/index.ts';
+
+export {
+  AbstractEventEmitter,
+  compileWildcard,
+  composeMixins,
+  createEventEmitter,
+  createMiddlewareEventEmitter,
+  createWildcardEventEmitter,
+  defineEventEmitterClass,
+  defineMiddlewareEventEmitter,
+  defineWildcardEventEmitter,
+  escapeRegexChar,
+  Executor,
+  ExecutorCancelledError,
+  ExecutorError,
+  ExecutorTimeoutError,
+  Types,
 };
