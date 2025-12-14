@@ -17,22 +17,21 @@ export interface BaseEventDefinitions {
 
 export type BaseOptions = AbortOptions & LifecycleOptions & RetryOptions & TimeoutOptions;
 
+export interface BuilderOptions {
+  [key: string]: unknown;
+
+  middleware?: boolean;
+  wildcard?: boolean;
+}
+
 export type BuilderState = {
   middleware?: boolean;
   wildcard?: boolean;
 };
 
-export type BuiltEmitter<T extends BaseEventDefinitions, S extends BuilderState> = AbstractEventEmitter<T> &
-  (S['middleware'] extends true ? MiddlewareSupport<T> : object) &
-  (S['wildcard'] extends true ? MatchSupport<T> : object);
-
-export interface ConfigurableEventEmitter<T extends BaseEventDefinitions> extends EventEmitter<T> {
-  configure(config: Partial<EventEmitterConfig>): void;
-
-  getConfig(): Readonly<EventEmitterConfig>;
-}
-
-export type Constructor<T = object> = new (...args: any[]) => T;
+export type BuiltEmitter<T extends BaseEventDefinitions, O extends BuilderOptions> = AbstractEventEmitter<T> &
+  (O['middleware'] extends true ? MiddlewareSupport<T> : object) &
+  (O['wildcard'] extends true ? MatchSupport<T> : object);
 
 export type DefaultBaseOptions = {
   maxRetries: 3;
@@ -48,16 +47,10 @@ export type DefaultBaseOptions = {
 
 export type EmitOptions = Partial<BaseOptions>;
 
-export interface EventBusOptions {
-  middleware?: boolean;
-  wildcard?: boolean;
-}
-
 export interface EventContext<
   T extends BaseEventDefinitions,
-  E extends AbstractEventEmitter<T> = AbstractEventEmitter<T>,
 > {
-  emitter: E;
+  emitter: AbstractEventEmitter<T>;
   eventName: EventName<T>;
   options?: ExecOptions;
   payload: EventPayload<T, EventName<T>> | undefined;
@@ -65,7 +58,17 @@ export interface EventContext<
 }
 
 export interface EventEmitter<T extends BaseEventDefinitions> {
+  clear(): Promise<void>;
+
+  configure(config: Partial<EventEmitterConfig>): void;
+
+  destroy(): Promise<void>;
+
   emit<K extends EventName<T>>(eventName: K, payload?: EventPayload<T, K>, options?: EmitOptions): Promise<void>;
+
+  getConfig(): Readonly<EventEmitterConfig>;
+
+  listenerCount(eventName?: EventName<T>): number;
 
   off<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>): void;
 
@@ -74,16 +77,19 @@ export interface EventEmitter<T extends BaseEventDefinitions> {
   once<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnceOptions): () => void;
 }
 
-export type EventEmitterConfig = object;
+export interface EventEmitterConfig {
+  [key: string]: unknown;
+
+  maxListeners?: number;
+}
 
 export type EventListener<T extends BaseEventDefinitions, K extends EventName<T>> = (
-  payload: EventPayload<T, K>,
+  payload: EventPayload<T, K>
 ) => Promise<void>;
 
 export type EventMiddleware<
-  T extends BaseEventDefinitions,
-  E extends AbstractEventEmitter<T> = AbstractEventEmitter<T>,
-> = (ctx: EventContext<T, E>, next: () => Promise<void>) => Promise<void>;
+  T extends BaseEventDefinitions
+> = (ctx: EventContext<T>, next: () => Promise<void>) => Promise<void>;
 
 export type EventName<T extends BaseEventDefinitions> = Extract<keyof T, string>;
 
@@ -107,6 +113,11 @@ export interface ListenerEntry<T extends BaseEventDefinitions, K extends EventNa
   priority?: number;
 }
 
+export interface ListenerOptions {
+  once?: boolean;
+  priority?: number;
+}
+
 export interface MatchSupport<T extends BaseEventDefinitions> {
   match(pattern: string, listener: EventListener<T, any>, options?: OnOptions): () => void;
 
@@ -115,18 +126,15 @@ export interface MatchSupport<T extends BaseEventDefinitions> {
   unmatch(pattern: string, listener: EventListener<T, any>): void;
 }
 
-export type MiddlewareEventEmitter<T extends BaseEventDefinitions> = AbstractEventEmitter<T> & MiddlewareSupport<T>;
-
 export interface MiddlewareSupport<T extends BaseEventDefinitions> {
-  use(middleware: EventMiddleware<T, any>): () => void;
+  getMiddlewareCount(): number;
+
+  use(middleware: EventMiddleware<T>): () => void;
 }
 
 export type OnceOptions = Omit<OnOptions, 'once'>;
 
-export interface OnOptions {
-  once?: boolean;
-  priority?: number;
-}
+export type OnOptions = ListenerOptions;
 
 export interface PatternListenerEntry<T extends BaseEventDefinitions> {
   listener: EventListener<T, any>;
@@ -152,5 +160,3 @@ export interface WildcardCompileOptions {
   flags?: string;
   separator?: string;
 }
-
-export type WildcardEventEmitter<T extends BaseEventDefinitions> = AbstractEventEmitter<T> & MatchSupport<T>;

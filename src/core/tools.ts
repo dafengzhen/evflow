@@ -1,16 +1,14 @@
-import type { AbstractEventEmitter } from './abstract-event-emitter.ts';
-import type { AbstractConstructor, BaseEventDefinitions, WildcardCompileOptions } from './types.ts';
+import type { WildcardCompileOptions } from './types.ts';
 
 export const compileWildcard = (pattern: string, options: WildcardCompileOptions = {}): RegExp => {
   const { cache, flags = '', separator = '.' } = options;
-
   const cacheKey = `${pattern}||${separator}||${flags}`;
-  if (cache && cache.has(cacheKey)) {
+
+  if (cache?.has(cacheKey)) {
     return cache.get(cacheKey)!;
   }
 
-  const sepClass = escapeRegexChar(separator);
-
+  const escapedSep = escapeRegexChar(separator);
   let regexStr = '^';
   let escaped = false;
 
@@ -33,13 +31,13 @@ export const compileWildcard = (pattern: string, options: WildcardCompileOptions
         regexStr += '.*';
         break;
       case '*':
-        regexStr += `[^${sepClass}]*`;
+        regexStr += `[^${escapedSep}]*`;
         break;
       case '+':
-        regexStr += `[^${sepClass}]+`;
+        regexStr += `[^${escapedSep}]+`;
         break;
       case '?':
-        regexStr += `[^${sepClass}]`;
+        regexStr += `[^${escapedSep}]`;
         break;
       default:
         regexStr += escapeRegexChar(ch);
@@ -52,24 +50,13 @@ export const compileWildcard = (pattern: string, options: WildcardCompileOptions
   }
 
   regexStr += '$';
+  const regex = new RegExp(regexStr, flags);
 
-  const re = new RegExp(regexStr, flags);
-  if (cache) {
-    cache.set(cacheKey, re);
-  }
-  return re;
+  cache?.set(cacheKey, regex);
+  return regex;
 };
 
 export const escapeRegexChar = (char: string): string => {
   return char.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 };
 
-export const composeMixins = <T extends BaseEventDefinitions>(
-  ...mixins: Array<(base: AbstractConstructor<AbstractEventEmitter<T>>) => AbstractConstructor<AbstractEventEmitter<T>>>
-) => {
-  return function applyMixins(
-    BaseClass: AbstractConstructor<AbstractEventEmitter<T>>,
-  ): AbstractConstructor<AbstractEventEmitter<T>> {
-    return mixins.reduce((Base, mixin) => mixin(Base), BaseClass);
-  };
-};

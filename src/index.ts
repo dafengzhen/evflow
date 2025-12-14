@@ -1,35 +1,21 @@
 import {
   AbstractEventEmitter,
   compileWildcard,
-  composeMixins,
-  createEventEmitter,
-  createMiddlewareEventEmitter,
-  createWildcardEventEmitter,
-  defineEventEmitterClass,
-  defineMiddlewareEventEmitter,
-  defineWildcardEventEmitter,
   escapeRegexChar,
   Executor,
   ExecutorCancelledError,
   ExecutorError,
   ExecutorTimeoutError,
-  Types,
+  Types
 } from './core/index.ts';
 
 export {
   AbstractEventEmitter,
   compileWildcard,
-  composeMixins,
-  createEventEmitter,
-  createMiddlewareEventEmitter,
-  createWildcardEventEmitter,
-  defineEventEmitterClass,
-  defineMiddlewareEventEmitter,
-  defineWildcardEventEmitter,
   escapeRegexChar,
   Executor,
   ExecutorCancelledError,
   ExecutorError,
   ExecutorTimeoutError,
-  Types,
+  Types
 };

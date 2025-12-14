@@ -1,13 +1,13 @@
 import type { Types } from '../src/index.ts';
 
-import { createMiddlewareEventEmitter } from '../src/index.ts';
+import { MiddlewareEventEmitter } from '../src/core/index.ts';
 
 interface MyEvents extends Types.BaseEventDefinitions {
   orderPlaced: { payload: { amount: number; id: string } };
   userCreated: { payload: { id: string; name: string } };
 }
 
-const emitter = createMiddlewareEventEmitter<MyEvents>();
+const emitter = new MiddlewareEventEmitter<MyEvents>();
 
 emitter.use(async (ctx, next) => {
   console.log(`[event] ${ctx.eventName} start`, ctx.payload);
@@ -26,7 +26,7 @@ const disposeTrim = emitter.use(async (ctx, next) => {
   if (ctx.eventName === 'userCreated' && ctx.payload) {
     ctx.payload = {
       ...ctx.payload,
-      name: (ctx.payload as any).name.trim(),
+      name: (ctx.payload as any).name.trim()
     };
   }
   await next();
@@ -44,5 +44,5 @@ emitter.on('userCreated', async (payload) => {
 
 await emitter.emit('userCreated', {
   id: 'u_1',
-  name: '  Alice  ',
+  name: '  Alice  '
 });
