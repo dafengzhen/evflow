@@ -1,7 +1,5 @@
 import {
-  AbstractEventEmitter,
-  compileWildcard,
-  escapeRegexChar,
+  EventEmitter,
   Executor,
   ExecutorCancelledError,
   ExecutorError,
@@ -10,9 +8,7 @@ import {
 } from './core/index.ts';
 
 export {
-  AbstractEventEmitter,
-  compileWildcard,
-  escapeRegexChar,
+  EventEmitter,
   Executor,
   ExecutorCancelledError,
   ExecutorError,

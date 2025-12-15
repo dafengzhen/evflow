@@ -1,13 +1,13 @@
 import type { Types } from '../src/index.ts';
 
-import { MiddlewareEventEmitter } from '../src/core/index.ts';
+import { EventEmitter } from '../src/index.ts';
 
 interface MyEvents extends Types.BaseEventDefinitions {
   orderPlaced: { payload: { amount: number; id: string } };
   userCreated: { payload: { id: string; name: string } };
 }
 
-const emitter = new MiddlewareEventEmitter<MyEvents>();
+const emitter = new EventEmitter<MyEvents>();
 
 emitter.use(async (ctx, next) => {
   console.log(`[event] ${ctx.eventName} start`, ctx.payload);

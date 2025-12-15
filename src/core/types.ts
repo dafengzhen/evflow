@@ -1,11 +1,7 @@
-import type { AbstractEventEmitter } from './abstract-event-emitter.ts';
-
 export interface AbortOptions {
   onCancel: () => void;
   signal?: AbortSignal;
 }
-
-export type AbstractConstructor<T = object> = abstract new (...args: any[]) => T;
 
 export interface BaseEventDefinition<P = undefined> {
   payload: P;
@@ -17,21 +13,9 @@ export interface BaseEventDefinitions {
 
 export type BaseOptions = AbortOptions & LifecycleOptions & RetryOptions & TimeoutOptions;
 
-export interface BuilderOptions {
-  [key: string]: unknown;
-
-  middleware?: boolean;
-  wildcard?: boolean;
+export interface CompiledPatternListenerEntry<T extends BaseEventDefinitions> extends PatternListenerEntry<T> {
+  re: RegExp;
 }
-
-export type BuilderState = {
-  middleware?: boolean;
-  wildcard?: boolean;
-};
-
-export type BuiltEmitter<T extends BaseEventDefinitions, O extends BuilderOptions> = AbstractEventEmitter<T> &
-  (O['middleware'] extends true ? MiddlewareSupport<T> : object) &
-  (O['wildcard'] extends true ? MatchSupport<T> : object);
 
 export type DefaultBaseOptions = {
   maxRetries: 3;
@@ -47,49 +31,14 @@ export type DefaultBaseOptions = {
 
 export type EmitOptions = Partial<BaseOptions>;
 
-export interface EventContext<
-  T extends BaseEventDefinitions,
-> {
-  emitter: AbstractEventEmitter<T>;
-  eventName: EventName<T>;
-  options?: ExecOptions;
-  payload: EventPayload<T, EventName<T>> | undefined;
-  state: EventPlainObject;
-}
-
-export interface EventEmitter<T extends BaseEventDefinitions> {
-  clear(): Promise<void>;
-
-  configure(config: Partial<EventEmitterConfig>): void;
-
-  destroy(): Promise<void>;
-
-  emit<K extends EventName<T>>(eventName: K, payload?: EventPayload<T, K>, options?: EmitOptions): Promise<void>;
-
-  getConfig(): Readonly<EventEmitterConfig>;
-
-  listenerCount(eventName?: EventName<T>): number;
-
-  off<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>): void;
-
-  on<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnOptions): () => void;
-
-  once<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnceOptions): () => void;
-}
-
-export interface EventEmitterConfig {
-  [key: string]: unknown;
-
-  maxListeners?: number;
-}
-
 export type EventListener<T extends BaseEventDefinitions, K extends EventName<T>> = (
   payload: EventPayload<T, K>
 ) => Promise<void>;
 
-export type EventMiddleware<
-  T extends BaseEventDefinitions
-> = (ctx: EventContext<T>, next: () => Promise<void>) => Promise<void>;
+export type EventMiddleware<T extends BaseEventDefinitions> = (
+  ctx: MiddlewareContext<T>,
+  next: () => Promise<void>
+) => Promise<void>;
 
 export type EventName<T extends BaseEventDefinitions> = Extract<keyof T, string>;
 
@@ -118,17 +67,14 @@ export interface ListenerOptions {
   priority?: number;
 }
 
-export interface MatchSupport<T extends BaseEventDefinitions> {
-  match(pattern: string, listener: EventListener<T, any>, options?: OnOptions): () => void;
-
-  matchOnce(pattern: string, listener: EventListener<T, any>, options?: OnceOptions): () => void;
-
-  unmatch(pattern: string, listener: EventListener<T, any>): void;
+export interface MiddlewareContext<T extends BaseEventDefinitions> {
+  eventName: EventName<T>;
+  options?: ExecOptions;
+  payload?: EventPayload<T, EventName<T>>;
+  state: EventPlainObject;
 }
 
 export interface MiddlewareSupport<T extends BaseEventDefinitions> {
-  getMiddlewareCount(): number;
-
   use(middleware: EventMiddleware<T>): () => void;
 }
 
@@ -137,10 +83,19 @@ export type OnceOptions = Omit<OnOptions, 'once'>;
 export type OnOptions = ListenerOptions;
 
 export interface PatternListenerEntry<T extends BaseEventDefinitions> {
+  cache?: Map<string, RegExp>;
+  flags?: string;
   listener: EventListener<T, any>;
   once?: boolean;
   pattern: string;
   priority?: number;
+  separator?: string;
+}
+
+export interface PatternOptions extends OnOptions {
+  cache?: Map<string, RegExp>;
+  flags?: string;
+  separator?: string;
 }
 
 export interface RetryOptions {
@@ -150,13 +105,33 @@ export interface RetryOptions {
   shouldRetry: (error: unknown) => boolean;
 }
 
+export interface Support<T extends BaseEventDefinitions> {
+  destroy(): void;
+
+  emit<K extends EventName<T>>(eventName: K, payload?: EventPayload<T, K>, options?: EmitOptions): Promise<void>;
+
+  off<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>): void;
+
+  on<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnOptions): () => void;
+
+  once<K extends EventName<T>>(eventName: K, listener: EventListener<T, K>, options?: OnceOptions): () => void;
+}
+
 export interface TimeoutOptions {
   onTimeout: (timeout: number) => void;
   timeout: number;
 }
 
-export interface WildcardCompileOptions {
+export interface WildcardCompileOptions extends OnOptions {
   cache?: Map<string, RegExp>;
   flags?: string;
   separator?: string;
+}
+
+export interface WildcardSupport<T extends BaseEventDefinitions> {
+  match(pattern: string, listener: EventListener<T, any>, options?: OnOptions): () => void;
+
+  matchOnce(pattern: string, listener: EventListener<T, any>, options?: OnceOptions): () => void;
+
+  unmatch(pattern: string, listener: EventListener<T, any>): void;
 }

@@ -1,4 +1,4 @@
-import { createEventEmitter } from '../src/index.ts';
+import { EventEmitter } from '../src/index.ts';
 
 type Events = {
   'order.created': { payload: { orderId: string } };
@@ -6,26 +6,17 @@ type Events = {
   'user.deleted': { payload: { id: string } };
 };
 
-const bus = createEventEmitter<
-  Events,
-  {
-    middleware: true;
-    wildcard: true;
-  }
->({
-  middleware: true,
-  wildcard: true
-});
+const emitter = new EventEmitter<Events>();
 
-bus.on('user.created', async (payload) => {
+emitter.on('user.created', async (payload) => {
   console.log(payload);
 });
 
-bus.match('user.*', async (payload) => {
+emitter.match('user.*', async (payload) => {
   console.log('any user event', payload);
 });
 
-bus.use(async (ctx, next) => {
+emitter.use(async (ctx, next) => {
   const start = Date.now();
   console.log('[event]', ctx.eventName, ctx.payload);
   try {
@@ -37,4 +28,4 @@ bus.use(async (ctx, next) => {
   }
 });
 
-await bus.emit('user.created', { id: '123' });
+await emitter.emit('user.created', { id: '123' });
