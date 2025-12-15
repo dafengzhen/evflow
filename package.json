@@ -62,7 +62,7 @@
       "npm run lint"
     ]
   },
-  "name": "emit-kit",
+  "name": "@dafengzhen/emit-kit",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dafengzhen/emit-kit.git"
