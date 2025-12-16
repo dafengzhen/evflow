@@ -20,7 +20,6 @@ import type {
 
 import { Executor } from './executor.ts';
 
-
 /**
  * EventEmitter.
  *
@@ -43,11 +42,7 @@ export class EventEmitter<T extends BaseEventDefinitions>
     this.patternCache.clear();
   }
 
-  async emit<K extends EventName<T>>(
-    eventName: K,
-    payload?: EventPayload<T, K>,
-    options?: EmitOptions
-  ): Promise<void> {
+  async emit<K extends EventName<T>>(eventName: K, payload?: EventPayload<T, K>, options?: EmitOptions): Promise<void> {
     const execOptions = (options ?? {}) as ExecOptions;
 
     const ctx: MiddlewareContext<T> = {
@@ -203,23 +198,27 @@ export class EventEmitter<T extends BaseEventDefinitions>
 
       const dispatch = async (i: number): Promise<void> => {
         if (i <= index) {
-          throw new Error('next() called multiple times.');
+          return Promise.reject(new Error('next() called multiple times.'));
         }
         index = i;
 
         const fn = i === middlewares.length ? finalHandler : middlewares[i];
         if (!fn) {
-          return;
+          return Promise.resolve();
         }
 
-        if (i === middlewares.length) {
-          return (fn as () => Promise<void>)();
-        }
+        try {
+          if (i === middlewares.length) {
+            return Promise.resolve((fn as () => Promise<void>)());
+          }
 
-        return fn(ctx, () => dispatch(i + 1));
+          return Promise.resolve(fn(ctx, () => dispatch(i + 1)));
+        } catch (err) {
+          return Promise.reject(err);
+        }
       };
 
-      await dispatch(0);
+      return dispatch(0);
     };
   }
 
