@@ -48,6 +48,8 @@ export type EventPlainObject = Record<string, unknown>;
 
 export type EventState = 'cancelled' | 'failed' | 'pending' | 'retrying' | 'running' | 'succeeded' | 'timeout';
 
+export type EventWithPayload<P> = BaseEventDefinition<P>;
+
 export type ExecOptions = BaseOptions;
 
 export interface LifecycleOptions {
