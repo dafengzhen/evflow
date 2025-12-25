@@ -71,8 +71,7 @@ export class APIManager {
   }
 
   abortAll(reason = 'User cancelled'): void {
-    const items = Array.from(this.pending.values());
-    for (const item of items) {
+    for (const item of this.pending.values()) {
       this.markCanceled(item, 'user', reason, { abortController: true });
     }
   }
@@ -102,15 +101,10 @@ export class APIManager {
     for (const cleanup of this.cleanupHandlers) {
       cleanup();
     }
-
     this.cleanupHandlers.clear();
   }
 
-  async get<T = any>(
-    url: string,
-    params?: Record<string, unknown>,
-    options?: Partial<ApiRequest>
-  ): Promise<ApiResponse<T>> {
+  async get<T = any>(url: string, params?: Record<string, unknown>, options?: Partial<ApiRequest>): Promise<ApiResponse<T>> {
     return this.request({ method: HttpMethod.GET, params, url, ...options });
   }
 
@@ -129,16 +123,16 @@ export class APIManager {
       if (entry) {
         void this.emitter.emit('api:cache:invalidated', { entry, key });
       }
-      this.cacheStore.delete(key);
-      this.metrics.updateCacheSize(this.cacheStore.size);
+      this.removeCacheEntry(key);
       return;
     }
 
     for (const [k, entry] of this.cacheStore.entries()) {
-      if (this.cachePolicy.shouldInvalidate(k, entry)) {
-        this.cacheStore.delete(k);
-        void this.emitter.emit('api:cache:expired', { entry, key: k });
+      if (!this.cachePolicy.shouldInvalidate(k, entry)) {
+        continue;
       }
+      this.cacheStore.delete(k);
+      void this.emitter.emit('api:cache:expired', { entry, key: k });
     }
     this.metrics.updateCacheSize(this.cacheStore.size);
   }
@@ -196,13 +190,8 @@ export class APIManager {
 
   private applyErrorInterceptors(error: ApiError): ApiError {
     for (const interceptor of [...this.interceptors].reverse()) {
-      if (!interceptor.onError) {
-        continue;
-      }
-
-      interceptor.onError(error);
+      interceptor.onError?.(error);
     }
-
     return error;
   }
 
@@ -243,6 +232,7 @@ export class APIManager {
 
   private buildRequest<T>(reqInit: Partial<ApiRequest<T>>): ApiRequest<T> {
     const now = Date.now();
+
     const request: ApiRequest<T> = {
       cacheOptions: reqInit.cacheOptions,
       data: reqInit.data,
@@ -312,15 +302,7 @@ export class APIManager {
     }
 
     const now = Date.now();
-    const cacheControl = res.headers['cache-control'];
-    let staleWhileRevalidate: number | undefined;
-
-    if (cacheControl) {
-      const m = cacheControl.match(/stale-while-revalidate=(\d+)/);
-      if (m) {
-        staleWhileRevalidate = parseInt(m[1], 10) * 1000;
-      }
-    }
+    const staleWhileRevalidate = this.parseStaleWhileRevalidateMs(res.headers['cache-control']);
 
     const entry: ApiCacheEntry = {
       data: res.data,
@@ -353,9 +335,11 @@ export class APIManager {
 
     const c = new AbortController();
     const onAbort = () => c.abort();
+
     for (const s of valid) {
       s.addEventListener('abort', onAbort, { once: true });
     }
+
     c.signal.addEventListener(
       'abort',
       () => {
@@ -365,6 +349,7 @@ export class APIManager {
       },
       { once: true }
     );
+
     return c.signal;
   }
 
@@ -372,7 +357,6 @@ export class APIManager {
     if (typeof config.adapter === 'function') {
       return config.adapter(config);
     }
-
     return config.adapter;
   }
 
@@ -394,16 +378,52 @@ export class APIManager {
     };
   }
 
+  private emitCacheHit(entry: ApiCacheEntry, request: ApiRequest): void {
+    this.metrics.recordCacheHit();
+    void this.emitter.emit('api:response:cache:hit', { entry, request });
+  }
+
+  private emitCacheMiss(request: ApiRequest): void {
+    this.metrics.recordCacheMiss();
+    void this.emitter.emit('api:response:cache:miss', request);
+  }
+
   private emitCanceledOnce(item: PendingItem): void {
     if (item.canceledEmitted) {
       return;
     }
+
     item.canceledEmitted = true;
     void this.emitter.emit('api:request:canceled', {
       abortedBy: item.abortedBy ?? 'external',
       reason: item.cancelReason ?? 'Canceled',
       request: item.request
     });
+  }
+
+  private ensureRevalidate(key: string, request: ApiRequest): void {
+    if (this.revalidating.has(key)) {
+      return;
+    }
+
+    const revalidateReq: ApiRequest = {
+      ...request,
+      abortSignal: undefined,
+      cacheOptions: { ...request.cacheOptions, forceRefresh: true },
+      id: this.generateRequestId(),
+      metadata: { ...request.metadata, createdAt: Date.now(), isRevalidate: true },
+      retryCount: 0,
+      timestamp: Date.now()
+    };
+
+    const p = this.runWithRetries<any, any>(revalidateReq)
+      .then(() => void 0)
+      .catch(() => void 0)
+      .finally(() => {
+        this.revalidating.delete(key);
+      });
+
+    this.revalidating.set(key, p);
   }
 
   private finalizeRequest<T>(request: ApiRequest<T>): void {
@@ -448,8 +468,11 @@ export class APIManager {
     return c.signal;
   }
 
-  private markCanceled(item: PendingItem, abortedBy: 'external' | 'user', reason: string,
-                       opts?: { abortController?: boolean; emitIfStarted?: boolean }
+  private markCanceled(
+    item: PendingItem,
+    abortedBy: 'external' | 'user',
+    reason: string,
+    opts?: { abortController?: boolean; emitIfStarted?: boolean }
   ): void {
     if (item.abortedBy) {
       return;
@@ -476,7 +499,7 @@ export class APIManager {
       concurrentRequests: 10,
       defaultCacheTTL: 5 * 60 * 1000,
       defaultHeaders: {
-        'accept': 'application/json',
+        accept: 'application/json',
         'content-type': 'application/json'
       },
       enableCache: true,
@@ -499,14 +522,23 @@ export class APIManager {
 
   private normalizeHeaders(headers: Record<string, string>): Record<string, string> {
     const out: Record<string, string> = {};
-
     for (const [k, v] of Object.entries(headers)) {
       if (v !== undefined && v !== null) {
         out[k.toLowerCase()] = String(v);
       }
     }
-
     return out;
+  }
+
+  private parseStaleWhileRevalidateMs(cacheControl?: string): number | undefined {
+    if (!cacheControl) {
+      return undefined;
+    }
+    const m = cacheControl.match(/stale-while-revalidate=(\d+)/);
+    if (!m) {
+      return undefined;
+    }
+    return parseInt(m[1], 10) * 1000;
   }
 
   private prepareRequest<T>(reqInit: Partial<ApiRequest<T>>): ApiRequest<T> {
@@ -541,10 +573,12 @@ export class APIManager {
     }
 
     external.addEventListener('abort', externalAbort, { once: true });
+    item.cleanupAbortBindings = () => external.removeEventListener('abort', externalAbort);
+  }
 
-    item.cleanupAbortBindings = () => {
-      external.removeEventListener('abort', externalAbort);
-    };
+  private removeCacheEntry(key: string): void {
+    this.cacheStore.delete(key);
+    this.metrics.updateCacheSize(this.cacheStore.size);
   }
 
   private async runOnce<TReq, TRes>(request: ApiRequest<TReq>): Promise<ApiResponse<TRes>> {
@@ -557,11 +591,9 @@ export class APIManager {
       await this.queue.acquire(controller.signal);
       acquired = true;
 
-
       if (!request.metadata?.isRevalidate) {
         this.metrics.recordActiveRequest();
       }
-
       this.metrics.updateQueueLength(this.queue.getQueueLength());
 
       const item = this.pending.get(request.id);
@@ -574,7 +606,6 @@ export class APIManager {
       if (item?.abortedBy && !item.canceledEmitted) {
         item.controller.abort();
         this.emitCanceledOnce(item);
-        // noinspection ExceptionCaughtLocallyJS
         throw new ApiError({ code: 'CANCELED', request });
       }
 
@@ -583,18 +614,12 @@ export class APIManager {
       if (!request.metadata?.isRevalidate) {
         this.metrics.recordSuccess();
       }
-
       void this.emitter.emit('api:response:success', response);
 
       await this.cacheIfNeeded(request, response);
       return response;
     } catch (e) {
-      let finalErr: ApiError;
-      if (e instanceof ApiError) {
-        finalErr = e;
-      } else {
-        finalErr = new ApiError({ cause: e, code: 'NETWORK_ERROR', request });
-      }
+      let finalErr: ApiError = e instanceof ApiError ? e : new ApiError({ cause: e, code: 'NETWORK_ERROR', request });
 
       const aborted = controller.signal.aborted;
       const isTimeout = finalErr.code === 'TIMEOUT';
@@ -611,20 +636,17 @@ export class APIManager {
         if (!request.metadata?.isRevalidate) {
           this.metrics.recordError();
         }
-      } else { /* empty */
       }
 
       if (!isCanceled) {
         finalErr = this.applyErrorInterceptors(finalErr);
         void this.emitter.emit('api:response:error', finalErr);
-      } else { /* empty */
       }
 
       throw finalErr;
     } finally {
       if (acquired) {
         this.queue.release();
-
         if (!request.metadata?.isRevalidate) {
           this.metrics.recordActiveRequestEnd();
         }
@@ -639,7 +661,7 @@ export class APIManager {
   private async runWithRetries<TReq, TRes>(request: ApiRequest<TReq>): Promise<ApiResponse<TRes>> {
     while (true) {
       try {
-        return this.runOnce<TReq, TRes>(request);
+        return await this.runOnce<TReq, TRes>(request);
       } catch (e) {
         const error = e as ApiError;
         if (!this.shouldRetry(request, error)) {
@@ -658,7 +680,6 @@ export class APIManager {
 
   private async sendAndProcess<T>(request: ApiRequest, controller: AbortController): Promise<ApiResponse<T>> {
     const timeoutSignal = this.makeTimeoutSignal(request.timeout!);
-
     const combined = this.combineSignals(controller.signal, timeoutSignal)!;
 
     try {
@@ -668,7 +689,6 @@ export class APIManager {
       this.applyResponseInterceptors(response);
 
       if (!this.config.validateStatus(response.status)) {
-        // noinspection ExceptionCaughtLocallyJS
         throw new ApiError({
           code: `HTTP_${response.status}`,
           request,
@@ -746,7 +766,6 @@ export class APIManager {
     if ((req.retryCount ?? 0) >= this.config.maxRetries) {
       return false;
     }
-
     if (err.code === 'TIMEOUT') {
       return true;
     }
@@ -764,8 +783,7 @@ export class APIManager {
 
   private async tryServeFromCache<T>(request: ApiRequest): Promise<ApiResponse<T> | null> {
     if (!this.shouldCheckCache(request)) {
-      this.metrics.recordCacheMiss();
-      void this.emitter.emit('api:response:cache:miss', request);
+      this.emitCacheMiss(request);
       return null;
     }
 
@@ -773,16 +791,14 @@ export class APIManager {
     const entry = this.cacheStore.get(key);
 
     if (!entry) {
-      this.metrics.recordCacheMiss();
-      void this.emitter.emit('api:response:cache:miss', request);
+      this.emitCacheMiss(request);
       return null;
     }
 
     if (this.cachePolicy.shouldInvalidate(key, entry)) {
-      this.cacheStore.delete(key);
+      this.removeCacheEntry(key);
       void this.emitter.emit('api:cache:expired', { entry, key });
-      this.metrics.recordCacheMiss();
-      void this.emitter.emit('api:response:cache:miss', request);
+      this.emitCacheMiss(request);
       return null;
     }
 
@@ -793,31 +809,11 @@ export class APIManager {
 
       const revalidate = request.cacheOptions?.revalidateOnStale !== false;
       if (revalidate && this.cachePolicy.shouldRevalidate(key, entry, request)) {
-        if (!this.revalidating.has(key)) {
-          const revalidateReq: ApiRequest = {
-            ...request,
-            abortSignal: undefined,
-            cacheOptions: { ...request.cacheOptions, forceRefresh: true },
-            id: this.generateRequestId(),
-            metadata: { ...request.metadata, createdAt: Date.now(), isRevalidate: true },
-            retryCount: 0,
-            timestamp: Date.now()
-          };
-
-          const p = this.runWithRetries<any, any>(revalidateReq)
-            .then(() => void 0)
-            .catch(() => void 0)
-            .finally(() => {
-              this.revalidating.delete(key);
-            });
-
-          this.revalidating.set(key, p);
-        }
+        this.ensureRevalidate(key, request);
       }
     }
 
-    this.metrics.recordCacheHit();
-    void this.emitter.emit('api:response:cache:hit', { entry, request });
+    this.emitCacheHit(entry, request);
     return this.createCachedResponse(request, entry);
   }
 
